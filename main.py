@@ -52,7 +52,7 @@ from cryptography.hazmat.primitives import hashes
 from cryptography.fernet import Fernet
 
 # pycrypter version
-pycrypter_version = "1.0"
+pycrypter_version = "1.1"
 
 # Progress bar variables
 bar_iteration = 0
@@ -82,6 +82,7 @@ file_errors = []
 dir_errors = []
 
 interactive = {'init': False}
+
 # misc
 memory_max_allocated = 300 * 1024 * 1024  # 300MB
 current_user = os.getlogin()
@@ -104,7 +105,7 @@ def cleanup_handler(signal=0, frame=None, silent=False, exit_reason=""):
 		frame (frame object): not used (optional, defaults to None)
 			Reserved for signal.signal() for Unix systems.
 		
-		silent (bool): print exit reason and code (optional, defaults to False)
+		silent (bool): prevent printing exit reason and code (optional, defaults to False)
 			Defines whether to print {signal} and {exit_reason}
 		
 		exit_reason (str): exit reason (optional, defaults to "" [Empty string])
@@ -274,7 +275,6 @@ def worker(callback_function, *args, **kwargs):
 				callback_function(*args, **kwargs)
 			except Exception as err:
 				err_name = type(err).__name__
-				print(f"[worker, {func_name}] | Exception at thread {threading.get_ident()}, {err_name}, {err}")
 				worker_errors.append(f"[worker, {func_name}] | Exception at thread {threading.get_ident()}, {err_name}, {err}")
 			finally:
 				threads.remove(current_thread)
@@ -380,8 +380,8 @@ def iterate_dir(directory, iterate_tree=True, skip_dirs=[]):
 			
 			Traceback (most recent call last):
 			  File "C:\MyPython\pycrypter.py", line 1, in <module>
-				raise ValueError("iterate_tree must be a valid boolean!")
-			ValueError: iterate_tree must be a valid boolean!
+				raise ValueError("iterate_tree must be a valid boolean")
+			ValueError: iterate_tree must be a valid boolean
 			
 			[Passing True, False, 1, 0 is a valid boolean]
 			
@@ -456,7 +456,7 @@ def iterate_dir(directory, iterate_tree=True, skip_dirs=[]):
 	"""
 	
 	if iterate_tree not in [True, False]:
-		raise ValueError("iterate_tree must be a valid boolean!")
+		raise ValueError("iterate_tree must be a valid boolean")
 
 	file_paths = []
 
@@ -511,7 +511,7 @@ def find_dir(directory_path):
 # |==================================================| Cipher functions |==================================================|
 
 # encryption function
-def encrypt_file(input_file, password="", keep_copy=False, safedel_overwrite=False):
+def encrypt_file(input_file, password="", keep_copy=False, override_raise=False):
 	"""
 	Define a function to encrypt a file in chunks
 	using the cryptography.Fernet module.
@@ -525,7 +525,9 @@ def encrypt_file(input_file, password="", keep_copy=False, safedel_overwrite=Fal
 			
 		keep_copy (bool): keep a copy of the decrypted file (optional, defaults to False)
 			Defines whether the script should keep a copy of the decrypted file.
-			
+		
+		override_raise (bool): override function raise statements (optional, defaults to False)
+			This will override the function's raise statements, disabling them.
 	Returns:
 		int: 0 [Success]
 		
@@ -541,6 +543,8 @@ def encrypt_file(input_file, password="", keep_copy=False, safedel_overwrite=Fal
 			- isn't a file or the file doesn't exist.
 			
 	Exceptions:
+		[Note: override_raise will disable these exceptions]
+		
 		[Exception 1] raise ValueError("keep_copy must be a valid boolean")
 		- This exception tells the user that the keep_copy argument
 		- must be a valid boolean. [True, False, 1, 0]
@@ -549,11 +553,7 @@ def encrypt_file(input_file, password="", keep_copy=False, safedel_overwrite=Fal
 			f"The file \"{input_file}\" exceeds the maximum memory allowed to allocate. (Max: {max_mem} MB)")
 		
 		- This exception tells the user that the file passed is too large to process.
-		- [The file must be below 300MB]
-		
-		[Exception 3] raise ValueError(f"The file \"{input_file}\" is a compiled binary file.")
-		- This exception tells the user that they cannot pass a
-		- compiled binary file as the file to encrypt.
+		- [The file must be below memory_max_allocated, check the variables above]
 		
 	Example usage:
 		Passing the script file will return Error 1
@@ -597,23 +597,10 @@ def encrypt_file(input_file, password="", keep_copy=False, safedel_overwrite=Fal
 		
 		[Output]
 		Traceback (most recent call last):
-		  File "C:\MyPython\pycrypter_module.py", line 1, in <module>
+		  File "C:\MyPython\pycrypter.py", line 1, in <module>
 			raise MemoryError(f"The file \"{input_file}\" exceeds the maximum memory allowed to allocate. (Max: {max_mem} MB)")
 			
 		MemoryError: The file "MyLargeFile.txt" exceeds the maximum memory allowed to allocate. (Max: 300.00 MB)
-		
-		=================================================================
-		Passing a binary file will throw a ValueError [Exception 3]
-		
-		return_value = encrypt_file("MyProgram.exe", password="MyPass", keep_copy=False)
-		print(return_value)
-		
-		[Output]
-		Traceback (most recent call last):
-		  File "C:\MyPython\pycrypter_module.py", line 1, in <module>
-			raise ValueError(f"The file \"{input_file}\" is a compiled binary file.")
-		
-		ValueError: The file "MyProgram.exe" is a compiled binary file.
 		
 		------------------------------------------------------------------
 		
@@ -648,9 +635,9 @@ def encrypt_file(input_file, password="", keep_copy=False, safedel_overwrite=Fal
 	if input_file == sys.argv[0]:
 		return "input_file == " + sys.argv[0] + " | Illegal operation"
 
-	if keep_copy not in [True, False]:
+	if keep_copy not in [True, False] and not override_raise:
 		raise ValueError("keep_copy must be a valid boolean")
-
+	
 	if cleanup_status:
 		return "CleanupInterrupt"
 	
@@ -662,36 +649,23 @@ def encrypt_file(input_file, password="", keep_copy=False, safedel_overwrite=Fal
 			file_errors.append(f"encrypt_file | The specified file \"{input_file}\" doesn't exist!")
 
 		progress_bar(bar_iteration, bar_total, prefix=f'Total Progress:', suffix='Complete')
-		print(file_errors)
 		return "File doesn't exist/isn't a file | file_error"
 	
 	# file safeguard
 	file_size = os.path.getsize(input_file)
 	file_name, file_ext = os.path.splitext(input_file)
 	
-	if not safedel_overwrite:
+	if not override_raise:
 		if file_size > memory_max_allocated:
 			progress_bar(bar_iteration, bar_total, prefix=f'Total Progress:', suffix='Complete')
 			max_mem = format(memory_max_allocated / (1024 * 1024))
 
 			raise MemoryError(f"The file \"{input_file}\" exceeds the maximum memory allowed to allocate. (Max: {max_mem} MB)")
-		elif file_ext in [".exe", ".dll", ".vhd", ".vdi", ".iso", ".vbox", ".vhdx", ".sys"]:
-			progress_bar(bar_iteration, bar_total, prefix=f'Total Progress:', suffix='Complete')
-
-			raise ValueError(f"The file \"{input_file}\" is a compiled binary file.")
-
-	# Write encrypted contents
-	temp_input_file = f"{input_file}.tempfile"
 
 	# Encrypt the file in chunks
-	with open(input_file, "rb") as original_file, open(temp_input_file, "ab") as encrypted_file:
-		"""
-		with open help:
-			original_file: The original encrypted file [input_file]
-			encrypted_file: The file to write encrypted contents into [temp_input_file]
-		"""
-
-		# Derive key from password and salt
+	with open(input_file, "rb+") as file:
+		file_size = os.path.getsize(input_file)
+		
 		salt = os.urandom(32)
 
 		kdf = PBKDF2HMAC(
@@ -700,59 +674,30 @@ def encrypt_file(input_file, password="", keep_copy=False, safedel_overwrite=Fal
 			salt=salt,
 			iterations=100000
 		)
-
+		
+		key = None
+		
 		if isinstance(password, bytes):
 			key = kdf.derive(password)
-		elif isinstance(password, str):
+		else:
 			key = kdf.derive(password.encode())
 		
 		fernet_key = base64.urlsafe_b64encode(key)
 		
-		if safedel_overwrite:
-			encrypted_file.close()
-			os.remove(temp_input_file)
-		else:
-			# Write the salt and encrypt the file
-			encrypted_file.write(salt)
+		file.seek(0, os.SEEK_SET)
+		chunk = file.read(50 * 1024 * 1024)
 		
-		if safedel_overwrite:
-			original_file.close()
+		file.seek(0, os.SEEK_SET)
+		file.write(salt)
+		
+		while True:
+			if not chunk:
+				break
+
+			chunk_encrypted = Fernet(fernet_key).encrypt(chunk)
+			file.write(chunk_encrypted)
 			
-			with open(input_file, "ab") as original_file:
-				file_size = os.path.getsize(input_file)
-				chunk = 50 * 1024 * 1024  # Read 1MB at a time
-				
-				original_file.truncate(0)
-				original_file.write(salt)
-				
-				file_size += 32
-				
-				while True:
-					if not file_size:
-						break
-					
-					if file_size > chunk:
-						chunk = 50 * 1024 * 1024
-						file_size -= chunk
-					else:
-						chunk = file_size
-						file_size = 0
-					
-					chunk_data = os.urandom(chunk)
-					
-					chunk_encrypted = Fernet(fernet_key).encrypt(chunk_data)
-					
-					original_file.write(chunk_encrypted)
-					original_file.flush()
-		else:
-			while True:
-				chunk = original_file.read(50 * 1024 * 1024)  # Read 1MB at a time
-
-				if not chunk:
-					break
-
-				chunk_encrypted = Fernet(fernet_key).encrypt(chunk)
-				encrypted_file.write(chunk_encrypted)
+			chunk = file.read(50 * 1024 * 1024)  # Read 50MB at a time
 
 	# Erase/keep the temp file
 	if keep_copy:
@@ -762,10 +707,6 @@ def encrypt_file(input_file, password="", keep_copy=False, safedel_overwrite=Fal
 		os.rename(input_file, f"{file_name}_decrypted_copy{file_ext}")
 		
 		os.rename(temp_input_file, input_file)
-	else:
-		if not interactive['init']:
-			os.remove(input_file)
-			os.rename(temp_input_file, input_file)
 
 	progress_bar(bar_iteration, bar_total, prefix=f'Total Progress:', suffix='Complete')
 	
@@ -813,11 +754,7 @@ def decrypt_file(input_file, password="", keep_copy=False):
 		- This exception tells the user that the file passed is too large to process.
 		- [The file must be below 300MB]
 		
-		[Exception 3] raise ValueError(f"The file \"{input_file}\" is a compiled binary file.")
-		- This exception tells the user that they cannot pass a
-		- compiled binary file as the file to decrypt.
-		
-		[Exception 4] raise DecryptionError(f"The key \"{password}\" is invalid.")
+		[Exception 3] raise DecryptionError(f"The key \"{password}\" is invalid.")
 		- This exception indicates that the password passed is invalid.
 		- Note: This exception is a custom defined exception
 		
@@ -863,33 +800,20 @@ def decrypt_file(input_file, password="", keep_copy=False):
 		
 		[Output]
 		Traceback (most recent call last):
-		  File "C:\MyPython\pycrypter_module.py", line 1, in <module>
+		  File "C:\MyPython\pycrypter.py", line 1, in <module>
 			raise MemoryError(f"The file \"{input_file}\" exceeds the maximum memory allowed to allocate. (Max: {max_mem} MB)")
 			
 		MemoryError: The file "MyLargeFile.txt" exceeds the maximum memory allowed to allocate. (Max: 300.00 MB)
 		
 		=================================================================
-		Passing a binary file will throw a ValueError [Exception 3]
-		
-		return_value = decrypt_file("MyProgram.exe", password="MyPass", keep_copy=False)
-		print(return_value)
-		
-		[Output]
-		Traceback (most recent call last):
-		  File "C:\MyPython\pycrypter_module.py", line 1, in <module>
-			raise ValueError(f"The file \"{input_file}\" is a compiled binary file.")
-		
-		ValueError: The file "MyProgram.exe" is a compiled binary file.
-		
-		=================================================================
-		Passing the wrong password will throw a custom defined DecryptionError [Exception 4]
+		Passing the wrong password will throw a custom defined DecryptionError [Exception 3]
 		
 		return_value = decrypt_file("text.txt", password="WrongPassword", keep_copy=False)
 		print(return_value)
 		
 		[Output]
 		Traceback (most recent call last):
-		  File "C:\MyPython\pycrypter_module.py", line 1, in <module>
+		  File "C:\MyPython\pycrypter.py", line 1, in <module>
 			raise DecryptionError(f"The key \"{password}\" is invalid.")
 		
 		DecryptionError: The key "WrongPassword" is invalid.
@@ -952,69 +876,51 @@ def decrypt_file(input_file, password="", keep_copy=False):
 		max_mem = format(memory_max_allocated / (1024 * 1024))
 
 		raise MemoryError(f"The file \"{input_file}\" exceeds the maximum memory allowed to allocate. (Max: {max_mem} MB)")
-	elif file_ext in [".exe", ".dll", ".vhd", ".vdi", ".iso", ".vbox", ".vhdx", ".sys"]:
-		progress_bar(bar_iteration, bar_total, prefix=f'Total Progress:', suffix='Complete')
-
-		raise ValueError(f"The file \"{input_file}\" is a compiled binary file.")
 
 	# Write encrypted contents
 	temp_input_file = f"{input_file}.tempfile"
 
 	# Decrypt the file in chunks
-	with open(input_file, "rb") as original_file, open(temp_input_file, "ab") as decrypted_file:
-		"""
-		with open help:
-			original_file: The original encrypted file [input_file]
-			decrypted_file: The file to write decrypted contents into [temp_input_file]
-		"""
-
-		decrypted_file.write(b"")
-		salt = original_file.read(32)
-
-		# Derive key from password and salt
+	with open(input_file, "rb+") as file:
+		file_size = os.path.getsize(input_file)
+		
+		salt = file.read(32)
+		
 		kdf = PBKDF2HMAC(
 			algorithm=hashes.SHA256(),
 			length=32,
 			salt=salt,
 			iterations=100000
 		)
+			
+		fernet_key = base64.urlsafe_b64encode(kdf.derive(password.encode()))
 		
-		if isinstance(password, bytes):
-			key = kdf.derive(password)
-		elif isinstance(password, str):
-			key = kdf.derive(password.encode())
+		file.seek(32, os.SEEK_SET)
+		chunk = file.read(50 * 1024 * 1024)
 		
-		fernet_key = base64.urlsafe_b64encode(key)
-
-		# Check if the key is correct
-		dummy_data = original_file.read(50 * 1024 * 1024)
-
 		try:
-			dummy_decrypted = Fernet(fernet_key).decrypt(dummy_data)
+			chunk_encrypted = Fernet(fernet_key).decrypt(chunk)
 		except cryptography.fernet.InvalidToken:
-			dummy_data = None
-			dummy_decrypted = None
-
-			original_file.close()
-			decrypted_file.close()
-
-			os.remove(temp_input_file)
-
-			progress_bar(bar_iteration, bar_total, prefix=f'Total Progress:', suffix='Complete')
+			file.close()
 			raise DecryptionError(f"The key \"{password}\" is invalid.")
-
-		# Write decrypted contents
-		original_file.seek(32)  # sets the file pointer to 32 bytes to prevent reading the salt
-
-		while True:
-			chunk = original_file.read(50 * 1024 * 1024)  # Read 50MB at a time
-
-			if not chunk:
-				break
-
+		
+		cursor_position = None
+		plaintext_end = 0
+		
+		while chunk:
 			chunk_decrypted = Fernet(fernet_key).decrypt(chunk)
-			decrypted_file.write(chunk_decrypted)
-
+			plaintext_end += len(chunk_decrypted)
+			
+			cursor_position = file.tell()
+			
+			file.seek(0, os.SEEK_SET)
+			file.write(chunk_decrypted)
+			
+			file.seek(cursor_position, os.SEEK_SET)
+			chunk = file.read(50 * 1024 * 1024)
+		
+		print(plaintext_end)
+		file.truncate(plaintext_end)
 	# Erase/keep the file
 	if keep_copy:
 		file_name_and_ext, file_ext = os.path.splitext(temp_input_file)
@@ -1023,14 +929,110 @@ def decrypt_file(input_file, password="", keep_copy=False):
 		os.rename(input_file, f"{file_name}_encrypted_copy{file_ext}")
 		
 		os.rename(temp_input_file, input_file)
-	else:
-		os.remove(input_file)
-		os.rename(temp_input_file, input_file)
-
+	
 	progress_bar(bar_iteration, bar_total, prefix=f'Total Progress:', suffix='Complete')
 	
 	interactive[f"{input_file} | parse_complete"] = True
 	return 0
+
+# Overwrite deletion
+def file_overwrite(file_path, file_size):
+	global cleanup_status
+	
+	with open(file_path, 'wb') as file:
+		original_size = file_size
+		
+		# Overwrite with a random bytearray
+		chunk = 50 * 1024 * 1024
+		file.truncate(0)		
+		
+		for pass_iteration in range(16):
+			file_size = original_size
+			chunk_data = None
+						
+			if pass_iteration in [0, 1]:
+				chunk_data = bytearray([0x00, 0x00]) # First pass
+								
+			elif pass_iteration in [2, 3]:
+				chunk_data = bytearray([0xFF, 0xFF]) # Second pass
+								
+			elif pass_iteration in [4, 5]:
+				chunk_data = bytearray([0x55, 0xAA]) # Third pass
+									
+			elif pass_iteration in [6, 7]:
+				chunk_data = bytearray([0xAA, 0x55]) # Fourth pass
+								
+			else:
+				chunk_data = os.urandom(2) # All other passes
+			
+			while file_size > 0:
+				if cleanup_status:
+					file.truncate(0)
+					file.close()
+					
+					os.remove(file_path)
+					
+					return
+				
+				chunk = min(file_size, 50 * 1024 * 1024)
+				
+				file.write(chunk_data * chunk)
+				file_size -= chunk
+			
+			file.truncate(0)
+			interactive[f"{file_path} | pass{pass_iteration + 1}_complete"] = True
+		
+	# Delete the file
+	os.remove(file_path)
+			
+def freespace_overwrite():
+	with open("disk_filler_file.tmp", 'wb') as file:
+		try:
+			usage = psutil.disk_usage("C:\\")
+			
+			# Allow 1 GB to be allocated to prevent out of disk issues
+			original_free_space = int(format(usage.free // (1024 * 1024 * 1024))) - 1
+			chunk = 500 * 1024 * 1024
+			
+			for pass_iteration in range(3):
+				free_space = original_free_space
+				chunk_data = None
+				
+				if pass_iteration == 0:
+					chunk_data = bytearray([0x00, 0x00])
+					
+				elif pass_iteration == 1:
+					chunk_data = bytearray([0xFF, 0xFF])
+				
+				elif pass_iteration == 2:
+					chunk_data = os.urandom(2)
+				
+				while free_space:
+					if cleanup_status:
+						file.truncate(0)
+						file.close()
+						
+						os.remove("disk_filler_file.tmp")
+						
+						raise KeyboardInterrupt
+					
+					file.write(chunk_data * chunk)
+					free_space -= chunk
+						
+				interactive[f"freespace_overwrite | pass{pass_iteration + 1}_complete"] = True
+				os.fsync(file.fileno())
+				
+				file.truncate(0)
+			
+			file.close()
+			os.remove("disk_filler_file.tmp")
+		except KeyboardInterrupt:
+			pass
+		except Exception as err:
+			err_name = type(err).__name__
+			
+			print(f"freespace_overwrite | An unexpected error occured! Details: \n")
+			traceback.print_exc()
 
 # Final debugging information, executed after everything
 def debug_info(interactive_call=False):
@@ -1070,6 +1072,10 @@ def debug_info(interactive_call=False):
 	print(f"\n{Fore.YELLOW}|-------------------------------------------------------------|{Style.RESET_ALL}")
 
 def pycrypter_interactive():
+	"""
+	
+	"""
+	
 	interactive['init'] = True
 	
 	global files_count
@@ -1288,6 +1294,100 @@ def pycrypter_interactive():
 		if "safedel " in command.lower():
 			safedel_arguments = command.replace("safedel ", "").lower()
 			
+			if "-fd" in safedel_arguments or "--fdel" in safedel_arguments:
+				args1 = safedel_arguments.replace("-fd", "")
+				safedel_arguments = args1.replace("--fdel", "")
+				
+				confirm = input("Do you wish to continue? This will remove deleted files from your disk. [Y/N]: ")
+				
+				if confirm.lower() == "y":
+					pass
+				else:
+					print("fdel canceled, returning. . .")
+					continue
+				
+				set_progress_bar = False
+				
+				symbols = ['\\', '|', '/', '-']
+				i = 0
+				
+				for pass_iteration in range(3):
+					interactive[f"freespace_overwrite | pass{pass_iteration + 1}_complete"] = False
+			
+				current_pass = 1
+				
+				thread = thread_create(
+					callback = freespace_overwrite
+				)
+				
+				total_start_time = time.time()
+				start_time = time.perf_counter()
+				
+				def get_tempfile_size():
+					tempfile_size = 0
+					
+					while not interactive[f"freespace_overwrite | pass3_complete"]:
+						if cleanup_status:
+							break
+						
+						try:
+							file_stats = os.stat("disk_filler_file.tmp")
+							tempfile_size = file_stats.st_size
+							
+							size_in_gb = float(format(tempfile_size // (1024 * 1024 * 1024)))
+							
+							sys.stdout.write(f"| current temp file size: {size_in_gb:.2f} GB")
+							sys.stdout.flush()
+						except ZeroDivisionError:
+							pass
+						
+						time.sleep(0.01)
+				
+				thread = thread_create(
+					callback = get_tempfile_size
+				)
+				
+				while True:
+					if cleanup_status:
+						sys.stdout.write(f"\rwaiting for pass {current_pass} to finish. . . stopped\n\n")
+						break
+					
+					if interactive[f"freespace_overwrite | pass{current_pass}_complete"] == True:
+						end_time = time.perf_counter()
+						sys.stdout.write(f"\b{' ' for i in range(100)}")
+						
+						sys.stdout.write(f"\rwaiting for pass {current_pass} to finish. . . done [finished in {(end_time - start_time):.2f} seconds]\n\n")
+						
+						current_pass += 1
+						
+						if current_pass == 3:
+							break
+						
+						start_time = time.perf_counter()
+						continue
+					
+					end_time = time.perf_counter()
+					
+					tempfile_size = 0
+					
+					elapsed_time = end_time - start_time
+					mins, sec = divmod(elapsed_time, 60)
+					
+					sys.stdout.write(f"\rwaiting for pass {current_pass} to finish. . . {symbols[i]} | ")
+					
+					sys.stdout.write(f"time elapsed: {int(mins)} minute{'s' if mins != 1 else ''} ")
+					sys.stdout.write(f"{int(sec)} second{'s' if sec != 1 else ''} ")
+					
+					sys.stdout.flush()
+					
+					i = (i + 1) % len(symbols)
+					time.sleep(0.1)
+				
+				total_end_time = time.time()
+				print(f"total time elapsed for fdel: {(total_end_time - total_start_time):.2f} seconds\n")
+				
+				continue
+			
 			files = tokenize(safedel_arguments)
 			confirm = input("Do you wish to continue? This process will be irriversible. [Y/N]: ")
 			
@@ -1307,47 +1407,8 @@ def pycrypter_interactive():
 					
 				interactive[f"{files[current_file]} | parse_complete"] = False
 				
-				for iteration in range(8):
+				for iteration in range(16):
 					interactive[f"{files[current_file]} | pass{iteration + 1}_complete"] = False
-				
-				def file_overwrite(file_path, file_size):
-					with open(file_path, 'wb') as file:
-						original_size = file_size
-						
-						# Overwrite with a random bytearray
-						chunk = 50 * 1024 * 1024
-						
-						for pass_iteration in range(8):
-							file_size = original_size
-							chunk_data = None
-							
-							while file_size > 0:
-								chunk = min(file_size, 50 * 1024 * 1024)
-								
-								if pass_iteration == 0:
-									chunk_data = bytearray([0x00, 0x00]) # First pass
-								
-								elif pass_iteration == 1:
-									chunk_data = bytearray([0xFF, 0xFF]) # Second pass
-								
-								elif pass_iteration == 2:
-									chunk_data = bytearray([0x55, 0xAA]) # Third pass
-									
-								elif pass_iteration == 3:
-									chunk_data = bytearray([0xAA, 0x55]) # Fourth pass
-								
-								else:
-									chunk_data = os.urandom(2) # All other passes
-								
-								file.write(chunk_data * chunk)
-								file_size -= chunk
-							
-							interactive[f"{files[current_file]} | pass{pass_iteration + 1}_complete"] = True
-						
-						file.truncate(0)
-					
-					# Delete the file
-					os.unlink(file_path)
 				
 				current_file_size = os.path.getsize(files[current_file])
 				
@@ -1356,7 +1417,7 @@ def pycrypter_interactive():
 					input_file = files[current_file], 
 					password = os.urandom(64),
 					keep_copy = False,
-					safedel_overwrite=True
+					override_raise=True
 				)
 				
 				total_start_time = time.time()
@@ -1396,24 +1457,43 @@ def pycrypter_interactive():
 					
 					if interactive[f"{files[current_file]} | pass{current_pass}_complete"] == True:
 						end_time = time.perf_counter()
+						
+						sys.stdout.write("\r")
+						
+						for i in range(100):
+							sys.stdout.write(" ")
+						
 						sys.stdout.write(f"\rwaiting for pass {current_pass} to finish. . . done [finished in {(end_time - start_time):.2f} seconds]\n\n")
 						
 						current_pass += 1
 						
-						if current_pass == 8:
+						if current_pass == 17:
 							break
 						
 						start_time = time.perf_counter()
 						continue
 					
-					sys.stdout.write(f"\rwaiting for pass {current_pass} to finish. . . {symbols[i]}")
+					end_time = time.perf_counter()
+					
+					tempfile_size = 0
+					
+					elapsed_time = end_time - start_time
+					mins, sec = divmod(elapsed_time, 60)
+					
 					i = (i + 1) % len(symbols)
+					
+					sys.stdout.write(f"\rwaiting for pass {current_pass} to finish. . . {symbols[i]} | ")
+					
+					sys.stdout.write(f"time elapsed: {int(mins)} minute{'s' if mins != 1 else ''} ")
+					sys.stdout.write(f"{int(sec)} second{'s' if sec != 1 else ''} ")
+					
+					sys.stdout.flush()
 					
 					time.sleep(0.1)
 				
 				total_end_time = time.time()
 				print(f"total time elapsed for {files[current_file]}: {(total_end_time - total_start_time):.2f} seconds\n")
-			
+				print(worker_errors)
 		...
 
 class Main:
@@ -1508,7 +1588,7 @@ class Main:
 				except Exception as err:
 					err_name = type(err).__name__
 					
-					print(f"An unexpected error occured! Restarting pycrypter interactive mode. . .\n")
+					print(f"An unexpected error occured! Details: \n")
 					traceback.print_exc()
 			
 			return
