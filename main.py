@@ -1,3 +1,6 @@
+# pycrypter version
+pycrypter_version = "1.2"
+
 # Required Modules
 import platform
 import atexit
@@ -51,52 +54,6 @@ from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 from cryptography.hazmat.primitives import hashes
 
 from cryptography.fernet import Fernet
-
-# pepper | DO NOT LEAK THIS!
-hash_pepper = b'\xf0f\x9e\x10\xca\xbf\xca\xc4\xf1\xfd\xee\x00\xab7b\xc8\x1em1`\xb1\x821b\xf8&\xa1\xa9(\xb0\xa6\x0b'
-password_pepper = b'\xd3\x9dh4N\x0c\xbc\xac\x17\xc1\xd7\xa5\x88\x8a2\xceI\x96\x10\x86A\n@\x19\x12\xfc\x8bi\xc8\tIA'
-
-# pycrypter version
-pycrypter_version = "1.1"
-
-# Progress bar variables
-bar_iteration = 0
-bar_total = 0
-
-# args variables
-files_count = 0
-files_finished = 0
-files_exception_thrown = 0
-
-# cleanup variables
-accept_threads = True
-cleanup_status = False
-
-set_progress_bar = True
-# semaphore
-semaphore = threading.Semaphore(5)
-
-# Threads created in worker function
-threads = []
-
-# Error lists
-worker_errors = []
-permission_errors = []
-
-file_errors = []
-dir_errors = []
-
-interactive = {'init': False}
-
-# misc
-memory_max_allocated = 300 * 1024 * 1024  # 300MB
-current_user = os.getlogin()
-
-class DecryptionError(Exception):
-	pass
-
-class ArgumentError(Exception):
-	pass
 
 # kernel32 signal handler function | cleanup function
 def cleanup_handler(signal=0, frame=None, silent=False, exit_reason=""):
@@ -461,18 +418,16 @@ def iterate_dir(directory, iterate_tree=True, skip_dirs=[]):
 	"""
 	
 	if iterate_tree not in [True, False]:
-		raise ValueError("iterate_tree must be a valid boolean")
+		raise ValueError(f"iterate_tree expected boolean, got {iterate_tree}")
 
 	file_paths = []
 
 	# Check argument if it's a directory
 	if not os.path.isdir(directory):
 		if os.path.isfile(directory):
-			dir_errors.append(f"The specified path isn't a directory!")
+			raise NotADirectoryError(f'[Errno 21] Not a directory: {directory}')
 		else:
-			dir_errors.append(f"The specified directory doesn't exist!")
-
-		return "NotADirectoryError"
+			raise FileNotFoundError(f'[Errno 2] No such directory: {directory}')
 
 	# Iterate through the directory, and catch PermissionErrors
 	# If iterateTree is true, also loop through the sub-dirs
@@ -489,7 +444,7 @@ def iterate_dir(directory, iterate_tree=True, skip_dirs=[]):
 			elif os.path.isdir(path) and iterate_tree:
 				file_paths.extend(iterate_dir(path))
 	except PermissionError as err:
-		permission_errors.append(f"iterate_dir | A PermissonError occured! Path: \"{directory}\"")
+		print(f"PermissionError: {err}")
 
 	return file_paths
 
@@ -516,7 +471,7 @@ def find_dir(directory_path):
 # |==================================================| Cipher functions |==================================================|
 
 # encryption function
-def encrypt_file(input_file, password="", keep_copy=False, override_raise=False):
+def encrypt_file(input_file, password="", keep_copy=False, hash_pepper=b"", password_pepper=b""):
 	"""
 	Define a function to encrypt a file in chunks
 	using the cryptography.Fernet module.
@@ -627,25 +582,13 @@ def encrypt_file(input_file, password="", keep_copy=False, override_raise=False)
 			# The ciphertext above was separated into two lines to fit it in this docstring
 	"""
 	
-	global cleanup_status
-	global memory_max_allocated
-
-	global bar_iteration
-	bar_iteration += 1
-
-	global files_finished
-	files_finished += 1
-
 	# Guard clauses
 	if input_file == sys.argv[0]:
-		return "input_file == " + sys.argv[0] + " | Illegal operation"
+		raise ValueError(f"illegal operation [input_file == {sys.argv[0]}]")
 
-	if keep_copy not in [True, False] and not override_raise:
-		raise ValueError("keep_copy must be a valid boolean")
-	
-	if cleanup_status:
-		return "CleanupInterrupt"
-	
+	if keep_copy not in [True, False]:
+		raise ValueError(f'keep_copy expected boolean, got {keep_copy}')
+
 	# Check argument if it's a file
 	if not os.path.isfile(input_file):
 		if os.path.isdir(input_file):
@@ -653,17 +596,6 @@ def encrypt_file(input_file, password="", keep_copy=False, override_raise=False)
 		else:
 			raise FileNotFoundError(f"[Errno 2] No such file: {input_file}")
 	
-	# file safeguard
-	file_size = os.path.getsize(input_file)
-	file_name, file_ext = os.path.splitext(input_file)
-	
-	if not override_raise:
-		if file_size > memory_max_allocated:
-			progress_bar(bar_iteration, bar_total, prefix=f'Total Progress:', suffix='Complete')
-			max_mem = format(memory_max_allocated / (1024 * 1024))
-
-			raise MemoryError(f"The file \"{input_file}\" exceeds the maximum memory allowed to allocate. (Max: {max_mem} MB)")
-
 	# Encrypt the file in chunks
 	with open(input_file, "rb+") as file:
 		file_size = os.path.getsize(input_file)
@@ -692,29 +624,19 @@ def encrypt_file(input_file, password="", keep_copy=False, override_raise=False)
 		file.seek(0, os.SEEK_SET)
 		file.write(salt)
 		
-		while True:
-			if not chunk:
-				break
+		if keep_copy:
+			file_name, file_ext = os.path.splitext(input_file)
+			shutil.copy2(input_file, f"{file_name}_decrypted-copy{file_ext}")
 
+		while chunk:
 			chunk_encrypted = Fernet(fernet_key).encrypt(chunk)
 			file.write(chunk_encrypted)
 			
 			chunk = file.read(50 * 1024 * 1024)  # Read 50MB at a time
-
-	# Erase/keep the temp file
-	if keep_copy:
-		file_name_and_ext, file_ext = os.path.splitext(temp_input_file)
-		
-		file_name, file_ext = os.path.splitext(file_name_and_ext)
-		os.rename(input_file, f"{file_name}_decrypted_copy{file_ext}")
-		
-		os.rename(temp_input_file, input_file)
-	
-	interactive[f"{input_file} | parse_complete"] = True
 	return 0
 
 # decryption function
-def decrypt_file(input_file, password="", keep_copy=False):
+def decrypt_file(input_file, password="", keep_copy=False, hash_pepper=b"", password_pepper=b""):
 	"""
 	Define a function to decrypt a file in chunks
 	using the cryptography.Fernet module.
@@ -837,24 +759,12 @@ def decrypt_file(input_file, password="", keep_copy=False):
 			This is my text in this .txt file
 	"""
 
-	global cleanup_status
-	global memory_max_allocated
-	
-	global bar_iteration
-	bar_iteration += 1
-
-	global files_finished
-	files_finished += 1
-
 	# Guard clauses
 	if input_file == sys.argv[0]:
-		return "input_file == " + sys.argv[0] + " | Illegal operation"
+		raise ValueError(f"illegal operation [input_file == {sys.argv[0]}]")
 
 	if keep_copy not in [1, 0]:
-		raise ValueError("keep_copy must be a boolean")
-
-	if cleanup_status:
-		return "CleanupInterrupt"
+		raise ValueError(f'expected boolean, got {keep_copy}')
 
 	# Check argument if it's a file
 	if not os.path.isfile(input_file):
@@ -862,16 +772,6 @@ def decrypt_file(input_file, password="", keep_copy=False):
 			raise IsADirectoryError(f"[Errno 21] Is a directory: {input_file}")
 		else:
 			raise FileNotFoundError(f"[Errno 2] No such file: {input_file}")
-
-	# Cipher part
-	file_size = os.path.getsize(input_file)
-	file_name, file_ext = os.path.splitext(input_file)
-
-	if file_size > memory_max_allocated:
-		progress_bar(bar_iteration, bar_total, prefix=f'Total Progress:', suffix='Complete')
-		max_mem = format(memory_max_allocated / (1024 * 1024))
-
-		raise MemoryError(f"The file \"{input_file}\" exceeds the maximum memory allowed to allocate. (Max: {max_mem} MB)")
 
 	# Decrypt the file in chunks
 	with open(input_file, "rb+") as file:
@@ -896,11 +796,20 @@ def decrypt_file(input_file, password="", keep_copy=False):
 		file.seek(32, os.SEEK_SET)
 		chunk = file.read(50 * 1024 * 1024)
 		
+		decrypt_successful = False
+		
 		try:
 			chunk_encrypted = Fernet(fernet_key).decrypt(chunk)
-		except cryptography.fernet.InvalidToken:
-			file.close()
-			raise DecryptionError(f"The key \"{password}\" is invalid.")
+			decrypt_successful = True
+		except cryptography.fernet.InvalidToken as error:
+			raise ValueError("Invalid key") from error
+		finally:
+			file.close() if not decrypt_successful else None
+		
+		# Erase/keep the file
+		if keep_copy:
+			file_name, file_ext = os.path.splitext(input_file)
+			shutil.copy2(input_file, f"{file_name}_decrypted-copy{file_ext}")
 		
 		cursor_position = None
 		plaintext_end = 0
@@ -919,17 +828,6 @@ def decrypt_file(input_file, password="", keep_copy=False):
 		
 		print(plaintext_end)
 		file.truncate(plaintext_end)
-	
-	# Erase/keep the file
-	if keep_copy:
-		file_name_and_ext, file_ext = os.path.splitext(temp_input_file)
-		
-		file_name, file_ext = os.path.splitext(file_name_and_ext)
-		os.rename(input_file, f"{file_name}_encrypted_copy{file_ext}")
-		
-		os.rename(temp_input_file, input_file)
-	
-	interactive[f"{input_file} | parse_complete"] = True
 	return 0
 
 # Overwrite deletion
@@ -1068,439 +966,51 @@ def debug_info(interactive_call=False):
 
 	print(f"\n{Fore.YELLOW}|-------------------------------------------------------------|{Style.RESET_ALL}")
 
-def pycrypter_interactive():
-	"""
-	
-	"""
-	
-	interactive['init'] = True
-	
-	global files_count
-	global files_finished
-	global files_exception_thrown
-
-	global bar_total
-	global current_user
-	global set_progress_bar
-	
-	def tokenize(string):
-		tokens = []
-		start = 0
-		in_quotes = False
-
-		for iteration, char in enumerate(string):
-			if char == '"' or char == "'":
-				in_quotes = not in_quotes
-			elif char == ' ' and not in_quotes:
-				token = string[start:iteration]
-				
-				if in_quotes and token.startswith('"') and token.endswith('"'):
-					token = token[1:-1]  # remove quotes
-				tokens.append(token)
-				start = iteration + 1
-
-		token = string[start:]
-		if in_quotes and token.startswith('"') and token.endswith('"'):
-			token = token[1:-1]  # remove quotes
-		tokens.append(token)
-
-		for iteration, token in enumerate(tokens):
-			if (token[0] == '"' and token[len(token) - 1] == '"'):
-				tokens[iteration] = tokens[iteration][1:-1]
-			
-			if token[0] == "'" and token[len(token) - 1] == "'":
-				tokens[iteration] = tokens[iteration][1:-1]
-		
-		return tokens
-	
-	main = Main()
-	
-	while True:
-		if cleanup_status:
-			break
-		
-		time.sleep(0.01)
-		try:
-			command = input("pycrypter> ")
-		except EOFError:
-			cleanup_handler(signal=0, silent=True, exit_reason="EOFCharacterExit")
-			break
-		
-		if command == "exit":
-			cleanup_handler(signal=0, silent=True, exit_reason="SystemExit")
-			break
-		
-		if "encrypt " in command.lower():
-			encryption_arguments = command.replace("encrypt ", "").lower()
-			keep_copy = False
-			
-			if "-c " in encryption_arguments or "--keep-copy " in encryption_arguments:
-				keep_copy = True
-				
-				args1 = encryption_arguments.replace("-c ", '')
-				encryption_arguments = args1.replace("--keep_copy ", '')
-				
-			if "-rw" in encryption_arguments or "--ransomware" in encryption_arguments:
-				args1 = encryption_arguments.replace("-rw", "")
-				encryption_arguments = args1.replace("--ransomware", "")
-				
-				dir_list = [
-					f"C:\\MyPython\\hmm"
-				]
-				
-				skip_dirs = [
-					f"C:\\Users\\{current_user}\\AppData"
-				]
-				
-				password = getpass.getpass("Enter a password: ")
-				
-				sys.stdout.write("|-------------------------------------------------------------|\n")
-				sys.stdout.flush()
-				
-				main.ransomware(
-					dir_list,
-					skip_directories=skip_dirs,
-					verbose=True,
-					password=password,
-					keep_copy=keep_copy,
-					cipher_method="encrypt"
-				)
-				
-				debug_info()
-				continue
-				
-			if "-f " in encryption_arguments or "--file " in encryption_arguments:
-				args1 = encryption_arguments.replace("-f ", "")
-				argument_files = args1.replace("--file ", "")
-				
-				files = tokenize(argument_files)
-				
-				password = getpass.getpass("Enter a password: ")
-				
-				sys.stdout.write("|-------------------------------------------------------------|\n")
-				sys.stdout.flush()
-				
-				if files:
-					main.cipher_file(
-						files,
-						verbose=True,
-						password=password,
-						keep_copy=keep_copy,
-						cipher_method="encrypt"
-					)
-			if "-dr " in encryption_arguments or "--directory " in encryption_arguments:
-				args1 = encryption_arguments.replace("-dr ", "")
-				argument_directories = args1.replace("--directory ", "")
-				
-				directories = tokenize(argument_directories)
-				
-				password = getpass.getpass("Enter a password: ")
-				
-				sys.stdout.write("|-------------------------------------------------------------|\n")
-				sys.stdout.flush()
-				
-				if directories:
-					main.cipher_directory(
-						directories,
-						verbose=True,
-						password=password,
-						keep_copy=keep_copy,
-						cipher_method="encrypt"
-					)
-			debug_info()
-		
-		if "decrypt " in command.lower():
-			decryption_arguments = command.replace("decrypt ", "").lower()
-			keep_copy = False
-			
-			if "-c " in decryption_arguments or "--keep-copy " in decryption_arguments:
-				keep_copy = True
-				
-				args1 = decryption_arguments.replace("-c ", '')
-				decryption_arguments = args1.replace("--keep_copy ", '')
-				
-			if "-rw" in decryption_arguments or "--ransomware" in decryption_arguments:
-				args1 = decryption_arguments.replace("-rw", "")
-				decryption_arguments = args1.replace("--ransomware", "")
-				
-				dir_list = [
-					f"C:\\MyPython\\hmm"
-				]
-				
-				skip_dirs = [
-					f"C:\\Users\\{current_user}\\AppData"
-				]
-				
-				password = getpass.getpass("Enter a password: ")
-				
-				sys.stdout.write("|-------------------------------------------------------------|\n")
-				sys.stdout.flush()
-				
-				main.ransomware(
-					dir_list,
-					skip_directories=skip_dirs,
-					verbose=True,
-					password=password,
-					keep_copy=keep_copy,
-					cipher_method="decrypt"
-				)
-				
-				debug_info()
-				continue
-				
-			if "-f " in decryption_arguments or "--file " in decryption_arguments:
-				args1 = decryption_arguments.replace("-f ", "")
-				argument_files = args1.replace("--file ", "")
-				
-				files = tokenize(argument_files)
-				
-				password = getpass.getpass("Enter a password: ")
-				
-				sys.stdout.write("|-------------------------------------------------------------|\n")
-				sys.stdout.flush()
-				
-				if files:
-					main.cipher_file(
-						files,
-						verbose=True,
-						password=password,
-						keep_copy=keep_copy,
-						cipher_method="decrypt"
-					)
-			if "-dr " in decryption_arguments or "--directory " in decryption_arguments:
-				args1 = decryption_arguments.replace("-dr ", "")
-				argument_directories = args1.replace("--directory ", "")
-				
-				directories = tokenize(argument_directories)
-				
-				password = getpass.getpass("Enter a password: ")
-				
-				sys.stdout.write("|-------------------------------------------------------------|\n")
-				sys.stdout.flush()
-				
-				if directories:
-					main.cipher_directory(
-						directories,
-						verbose=True,
-						password=password,
-						keep_copy=keep_copy,
-						cipher_method="decrypt"
-					)
-			debug_info()
-			
-		if "safedel " in command.lower():
-			safedel_arguments = command.replace("safedel ", "").lower()
-			
-			if "-fd" in safedel_arguments or "--fdel" in safedel_arguments:
-				args1 = safedel_arguments.replace("-fd", "")
-				safedel_arguments = args1.replace("--fdel", "")
-				
-				confirm = input("Do you wish to continue? This will remove deleted files from your disk. [Y/N]: ")
-				
-				if confirm.lower() == "y":
-					pass
-				else:
-					print("fdel canceled, returning. . .")
-					continue
-				
-				set_progress_bar = False
-				
-				symbols = ['\\', '|', '/', '-']
-				i = 0
-				
-				for pass_iteration in range(3):
-					interactive[f"freespace_overwrite | pass{pass_iteration + 1}_complete"] = False
-			
-				current_pass = 1
-				
-				thread = thread_create(
-					callback = freespace_overwrite
-				)
-				
-				total_start_time = time.time()
-				start_time = time.perf_counter()
-				
-				def get_tempfile_size():
-					tempfile_size = 0
-					
-					while not interactive[f"freespace_overwrite | pass3_complete"]:
-						if cleanup_status:
-							break
-						
-						try:
-							file_stats = os.stat("disk_filler_file.tmp")
-							tempfile_size = file_stats.st_size
-							
-							size_in_gb = float(format(tempfile_size // (1024 * 1024 * 1024)))
-							
-							sys.stdout.write(f"| current temp file size: {size_in_gb:.2f} GB")
-							sys.stdout.flush()
-						except ZeroDivisionError:
-							pass
-						
-						time.sleep(0.01)
-				
-				thread = thread_create(
-					callback = get_tempfile_size
-				)
-				
-				while True:
-					if cleanup_status:
-						sys.stdout.write(f"\rwaiting for pass {current_pass} to finish. . . stopped\n\n")
-						break
-					
-					if interactive[f"freespace_overwrite | pass{current_pass}_complete"] == True:
-						end_time = time.perf_counter()
-						sys.stdout.write(f"\b{' ' for i in range(100)}")
-						
-						sys.stdout.write(f"\rwaiting for pass {current_pass} to finish. . . done [finished in {(end_time - start_time):.2f} seconds]\n\n")
-						
-						current_pass += 1
-						
-						if current_pass == 3:
-							break
-						
-						start_time = time.perf_counter()
-						continue
-					
-					end_time = time.perf_counter()
-					
-					tempfile_size = 0
-					
-					elapsed_time = end_time - start_time
-					mins, sec = divmod(elapsed_time, 60)
-					
-					sys.stdout.write(f"\rwaiting for pass {current_pass} to finish. . . {symbols[i]} | ")
-					
-					sys.stdout.write(f"time elapsed: {int(mins)} minute{'s' if mins != 1 else ''} ")
-					sys.stdout.write(f"{int(sec)} second{'s' if sec != 1 else ''} ")
-					
-					sys.stdout.flush()
-					
-					i = (i + 1) % len(symbols)
-					time.sleep(0.1)
-				
-				total_end_time = time.time()
-				print(f"total time elapsed for fdel: {(total_end_time - total_start_time):.2f} seconds\n")
-				
-				continue
-			
-			files = tokenize(safedel_arguments)
-			confirm = input("Do you wish to continue? This process will be irriversible. [Y/N]: ")
-			
-			if confirm.lower() == "y":
-				pass
-			else:
-				print("safedel canceled, returning. . .")
-				continue
-			
-			print(files)
-			
-			for current_file, file_to_delete in enumerate(files):
-				set_progress_bar = False
-				
-				symbols = ['\\', '|', '/', '-']
-				i = 0
-					
-				interactive[f"{files[current_file]} | parse_complete"] = False
-				
-				for iteration in range(16):
-					interactive[f"{files[current_file]} | pass{iteration + 1}_complete"] = False
-				
-				current_file_size = os.path.getsize(files[current_file])
-				
-				thread = thread_create(
-					callback = encrypt_file,
-					input_file = files[current_file], 
-					password = os.urandom(64),
-					keep_copy = False,
-					override_raise=True
-				)
-				
-				total_start_time = time.time()
-				
-				print(f"\n{files[current_file]}: ")
-				start_time = time.perf_counter()
-				
-				while True:
-					if cleanup_status:
-						sys.stdout.write(f"\rwaiting for encryption to finish. . . stopped\n\n")
-						break
-					
-					if interactive[f"{files[current_file]} | parse_complete"] == True:
-						end_time = time.perf_counter()
-						sys.stdout.write(f"\rwaiting for encryption to finish. . . done [finished in {(end_time - start_time):.2f} seconds]\n\n")
-						
-						break
-					
-					sys.stdout.write(f"\rwaiting for encryption to finish. . . {symbols[i]}")
-					i = (i + 1) % len(symbols)
-					
-					time.sleep(0.1)
-				
-				thread = thread_create(
-					callback = file_overwrite,
-					file_path = files[current_file],
-					file_size = current_file_size
-				)
-				
-				current_pass = 1
-				start_time = time.perf_counter()
-				
-				while True:
-					if cleanup_status:
-						sys.stdout.write(f"\rwaiting for pass {current_pass} to finish. . . stopped\n\n")
-						break
-					
-					if interactive[f"{files[current_file]} | pass{current_pass}_complete"] == True:
-						end_time = time.perf_counter()
-						
-						sys.stdout.write("\r")
-						
-						for i in range(100):
-							sys.stdout.write(" ")
-						
-						sys.stdout.write(f"\rwaiting for pass {current_pass} to finish. . . done [finished in {(end_time - start_time):.2f} seconds]\n\n")
-						
-						current_pass += 1
-						
-						if current_pass == 17:
-							break
-						
-						start_time = time.perf_counter()
-						continue
-					
-					end_time = time.perf_counter()
-					
-					tempfile_size = 0
-					
-					elapsed_time = end_time - start_time
-					mins, sec = divmod(elapsed_time, 60)
-					
-					i = (i + 1) % len(symbols)
-					
-					sys.stdout.write(f"\rwaiting for pass {current_pass} to finish. . . {symbols[i]} | ")
-					
-					sys.stdout.write(f"time elapsed: {int(mins)} minute{'s' if mins != 1 else ''} ")
-					sys.stdout.write(f"{int(sec)} second{'s' if sec != 1 else ''} ")
-					
-					sys.stdout.flush()
-					
-					time.sleep(0.1)
-				
-				total_end_time = time.time()
-				print(f"total time elapsed for {files[current_file]}: {(total_end_time - total_start_time):.2f} seconds\n")
-				print(worker_errors)
-		...
-
 class Main:
-	def __init__(self):
-		# use the global variables
-		global threads
-		global cleanup_status
-
-		global bar_total
+	if __name__ != "__main__":
+		raise RuntimeError("class Main must be called as __main__")
 	
+	def __init__(self):
+		# pepper | DO NOT LEAK THIS!
+		self.hash_pepper = b'\xf0f\x9e\x10\xca\xbf\xca\xc4\xf1\xfd\xee\x00\xab7b\xc8\x1em1`\xb1\x821b\xf8&\xa1\xa9(\xb0\xa6\x0b'
+		self.password_pepper = b'\xd3\x9dh4N\x0c\xbc\xac\x17\xc1\xd7\xa5\x88\x8a2\xceI\x96\x10\x86A\n@\x19\x12\xfc\x8bi\xc8\tIA'
+
+		# Progress bar variables
+		self.bar_iteration = 0
+		self.bar_total = 0
+
+		# args variables
+		self.files_count = 0
+		self.files_finished = 0
+		self.files_exception_thrown = 0
+
+		# cleanup variables
+		self.accept_threads = True
+		self.cleanup_status = False
+
+		self.set_progress_bar = True
+		# semaphore
+		semaphore = threading.Semaphore(5)
+
+		# Threads created in worker function
+		threads = []
+
+		# Error lists
+		worker_errors = []
+		permission_errors = []
+
+		file_errors = []
+		dir_errors = []
+
+		interactive = {'init': False}
+
+		# misc
+		memory_max_allocated = 300 * 1024 * 1024  # 300MB
+		current_user = os.getlogin()
+
+		class ArgumentError(Exception):
+			pass
+
 		# self.parser objects
 		self.args = None
 		
@@ -1572,6 +1082,437 @@ class Main:
 			help='Directory path(s) to specify.'
 		)
 	
+	def pycrypter_interactive():
+		"""
+		
+		"""
+		
+		interactive['init'] = True
+		
+		global files_count
+		global files_finished
+		global files_exception_thrown
+
+		global bar_total
+		global current_user
+		global set_progress_bar
+		
+		def tokenize(string):
+			tokens = []
+			start = 0
+			in_quotes = False
+
+			for iteration, char in enumerate(string):
+				if char == '"' or char == "'":
+					in_quotes = not in_quotes
+				elif char == ' ' and not in_quotes:
+					token = string[start:iteration]
+					
+					if in_quotes and token.startswith('"') and token.endswith('"'):
+						token = token[1:-1]  # remove quotes
+					tokens.append(token)
+					start = iteration + 1
+
+			token = string[start:]
+			if in_quotes and token.startswith('"') and token.endswith('"'):
+				token = token[1:-1]  # remove quotes
+			tokens.append(token)
+
+			for iteration, token in enumerate(tokens):
+				if (token[0] == '"' and token[len(token) - 1] == '"'):
+					tokens[iteration] = tokens[iteration][1:-1]
+				
+				if token[0] == "'" and token[len(token) - 1] == "'":
+					tokens[iteration] = tokens[iteration][1:-1]
+			
+			return tokens
+		
+		main = Main()
+		
+		while True:
+			if cleanup_status:
+				break
+			
+			time.sleep(0.01)
+			try:
+				command = input("pycrypter> ")
+			except EOFError:
+				cleanup_handler(signal=0, silent=True, exit_reason="EOFCharacterExit")
+				break
+			
+			if command == "exit":
+				cleanup_handler(signal=0, silent=True, exit_reason="SystemExit")
+				break
+			
+			if "encrypt " in command.lower():
+				encryption_arguments = command.replace("encrypt ", "").lower()
+				keep_copy = False
+				
+				if "-c " in encryption_arguments or "--keep-copy " in encryption_arguments:
+					keep_copy = True
+					
+					args1 = encryption_arguments.replace("-c ", '')
+					encryption_arguments = args1.replace("--keep_copy ", '')
+					
+				if "-rw" in encryption_arguments or "--ransomware" in encryption_arguments:
+					args1 = encryption_arguments.replace("-rw", "")
+					encryption_arguments = args1.replace("--ransomware", "")
+					
+					dir_list = [
+						f"C:\\MyPython\\hmm"
+					]
+					
+					skip_dirs = [
+						f"C:\\Users\\{current_user}\\AppData"
+					]
+					
+					password = getpass.getpass("Enter a password: ")
+					
+					sys.stdout.write("|-------------------------------------------------------------|\n")
+					sys.stdout.flush()
+					
+					main.ransomware(
+						dir_list,
+						skip_directories=skip_dirs,
+						verbose=True,
+						password=password,
+						keep_copy=keep_copy,
+						cipher_method="encrypt"
+					)
+					
+					debug_info()
+					continue
+					
+				if "-f " in encryption_arguments or "--file " in encryption_arguments:
+					args1 = encryption_arguments.replace("-f ", "")
+					argument_files = args1.replace("--file ", "")
+					
+					files = tokenize(argument_files)
+					
+					password = getpass.getpass("Enter a password: ")
+					
+					sys.stdout.write("|-------------------------------------------------------------|\n")
+					sys.stdout.flush()
+					
+					if files:
+						main.cipher_file(
+							files,
+							verbose=True,
+							password=password,
+							keep_copy=keep_copy,
+							cipher_method="encrypt"
+						)
+				if "-dr " in encryption_arguments or "--directory " in encryption_arguments:
+					args1 = encryption_arguments.replace("-dr ", "")
+					argument_directories = args1.replace("--directory ", "")
+					
+					directories = tokenize(argument_directories)
+					
+					password = getpass.getpass("Enter a password: ")
+					
+					sys.stdout.write("|-------------------------------------------------------------|\n")
+					sys.stdout.flush()
+					
+					if directories:
+						main.cipher_directory(
+							directories,
+							verbose=True,
+							password=password,
+							keep_copy=keep_copy,
+							cipher_method="encrypt"
+						)
+				debug_info()
+			
+			if "decrypt " in command.lower():
+				decryption_arguments = command.replace("decrypt ", "").lower()
+				keep_copy = False
+				
+				if "-c " in decryption_arguments or "--keep-copy " in decryption_arguments:
+					keep_copy = True
+					
+					args1 = decryption_arguments.replace("-c ", '')
+					decryption_arguments = args1.replace("--keep_copy ", '')
+					
+				if "-rw" in decryption_arguments or "--ransomware" in decryption_arguments:
+					args1 = decryption_arguments.replace("-rw", "")
+					decryption_arguments = args1.replace("--ransomware", "")
+					
+					dir_list = [
+						f"C:\\MyPython\\hmm"
+					]
+					
+					skip_dirs = [
+						f"C:\\Users\\{current_user}\\AppData"
+					]
+					
+					password = getpass.getpass("Enter a password: ")
+					
+					sys.stdout.write("|-------------------------------------------------------------|\n")
+					sys.stdout.flush()
+					
+					main.ransomware(
+						dir_list,
+						skip_directories=skip_dirs,
+						verbose=True,
+						password=password,
+						keep_copy=keep_copy,
+						cipher_method="decrypt"
+					)
+					
+					debug_info()
+					continue
+					
+				if "-f " in decryption_arguments or "--file " in decryption_arguments:
+					args1 = decryption_arguments.replace("-f ", "")
+					argument_files = args1.replace("--file ", "")
+					
+					files = tokenize(argument_files)
+					
+					password = getpass.getpass("Enter a password: ")
+					
+					sys.stdout.write("|-------------------------------------------------------------|\n")
+					sys.stdout.flush()
+					
+					if files:
+						main.cipher_file(
+							files,
+							verbose=True,
+							password=password,
+							keep_copy=keep_copy,
+							cipher_method="decrypt"
+						)
+				if "-dr " in decryption_arguments or "--directory " in decryption_arguments:
+					args1 = decryption_arguments.replace("-dr ", "")
+					argument_directories = args1.replace("--directory ", "")
+					
+					directories = tokenize(argument_directories)
+					
+					password = getpass.getpass("Enter a password: ")
+					
+					sys.stdout.write("|-------------------------------------------------------------|\n")
+					sys.stdout.flush()
+					
+					if directories:
+						main.cipher_directory(
+							directories,
+							verbose=True,
+							password=password,
+							keep_copy=keep_copy,
+							cipher_method="decrypt"
+						)
+				debug_info()
+				
+			if "safedel " in command.lower():
+				safedel_arguments = command.replace("safedel ", "").lower()
+				
+				if "-fd" in safedel_arguments or "--fdel" in safedel_arguments:
+					args1 = safedel_arguments.replace("-fd", "")
+					safedel_arguments = args1.replace("--fdel", "")
+					
+					confirm = input("Do you wish to continue? This will remove deleted files from your disk. [Y/N]: ")
+					
+					if confirm.lower() == "y":
+						pass
+					else:
+						print("fdel canceled, returning. . .")
+						continue
+					
+					set_progress_bar = False
+					
+					symbols = ['\\', '|', '/', '-']
+					i = 0
+					
+					for pass_iteration in range(3):
+						interactive[f"freespace_overwrite | pass{pass_iteration + 1}_complete"] = False
+				
+					current_pass = 1
+					
+					thread = thread_create(
+						callback = freespace_overwrite
+					)
+					
+					total_start_time = time.time()
+					start_time = time.perf_counter()
+					
+					def get_tempfile_size():
+						tempfile_size = 0
+						
+						while not interactive[f"freespace_overwrite | pass3_complete"]:
+							if cleanup_status:
+								break
+							
+							try:
+								file_stats = os.stat("disk_filler_file.tmp")
+								tempfile_size = file_stats.st_size
+								
+								size_in_gb = float(format(tempfile_size // (1024 * 1024 * 1024)))
+								
+								sys.stdout.write(f"| current temp file size: {size_in_gb:.2f} GB")
+								sys.stdout.flush()
+							except ZeroDivisionError:
+								pass
+							
+							time.sleep(0.01)
+					
+					thread = thread_create(
+						callback = get_tempfile_size
+					)
+					
+					while True:
+						if cleanup_status:
+							sys.stdout.write(f"\rwaiting for pass {current_pass} to finish. . . stopped\n\n")
+							break
+						
+						if interactive[f"freespace_overwrite | pass{current_pass}_complete"] == True:
+							end_time = time.perf_counter()
+							sys.stdout.write(f"\b{' ' for i in range(100)}")
+							
+							sys.stdout.write(f"\rwaiting for pass {current_pass} to finish. . . done [finished in {(end_time - start_time):.2f} seconds]\n\n")
+							
+							current_pass += 1
+							
+							if current_pass == 3:
+								break
+							
+							start_time = time.perf_counter()
+							continue
+						
+						end_time = time.perf_counter()
+						
+						tempfile_size = 0
+						
+						elapsed_time = end_time - start_time
+						mins, sec = divmod(elapsed_time, 60)
+						
+						sys.stdout.write(f"\rwaiting for pass {current_pass} to finish. . . {symbols[i]} | ")
+						
+						sys.stdout.write(f"time elapsed: {int(mins)} minute{'s' if mins != 1 else ''} ")
+						sys.stdout.write(f"{int(sec)} second{'s' if sec != 1 else ''} ")
+						
+						sys.stdout.flush()
+						
+						i = (i + 1) % len(symbols)
+						time.sleep(0.1)
+					
+					total_end_time = time.time()
+					print(f"total time elapsed for fdel: {(total_end_time - total_start_time):.2f} seconds\n")
+					
+					continue
+				
+				files = tokenize(safedel_arguments)
+				confirm = input("Do you wish to continue? This process will be irriversible. [Y/N]: ")
+				
+				if confirm.lower() == "y":
+					pass
+				else:
+					print("safedel canceled, returning. . .")
+					continue
+				
+				print(files)
+				
+				for current_file, file_to_delete in enumerate(files):
+					set_progress_bar = False
+					
+					symbols = ['\\', '|', '/', '-']
+					i = 0
+						
+					interactive[f"{files[current_file]} | cipher_complete"] = False
+					
+					for iteration in range(16):
+						interactive[f"{files[current_file]} | pass{iteration + 1}_complete"] = False
+					
+					current_file_size = os.path.getsize(files[current_file])
+					
+					def call_cipher(cipher_mode="encrypt", *args):
+						encrypt_file(*args) if cipher_mode == "encrypt" else decrypt_file(*args)
+						
+						interactive[f"{files[current_file]} | cipher_complete"]
+						
+					thread = thread_create(
+						callback = cipher,
+						cipher_mode = "encrypt",
+						input_file = files[current_file], 
+						password = os.urandom(64),
+						keep_copy = False,
+						override_raise=True
+					)
+					
+					total_start_time = time.time()
+					
+					print(f"\n{files[current_file]}: ")
+					start_time = time.perf_counter()
+					
+					while True:
+						if cleanup_status:
+							sys.stdout.write(f"\rwaiting for encryption to finish. . . stopped\n\n")
+							break
+						
+						if interactive[f"{files[current_file]} | cipher_complete"] == True:
+							end_time = time.perf_counter()
+							sys.stdout.write(f"\rwaiting for encryption to finish. . . done [finished in {(end_time - start_time):.2f} seconds]\n\n")
+							
+							break
+						
+						sys.stdout.write(f"\rwaiting for encryption to finish. . . {symbols[i]}")
+						i = (i + 1) % len(symbols)
+						
+						time.sleep(0.1)
+					
+					thread = thread_create(
+						callback = file_overwrite,
+						file_path = files[current_file],
+						file_size = current_file_size
+					)
+					
+					current_pass = 1
+					start_time = time.perf_counter()
+					
+					while True:
+						if cleanup_status:
+							sys.stdout.write(f"\rwaiting for pass {current_pass} to finish. . . stopped\n\n")
+							break
+						
+						if interactive[f"{files[current_file]} | pass{current_pass}_complete"] == True:
+							end_time = time.perf_counter()
+							
+							sys.stdout.write("\r")
+							
+							for i in range(100):
+								sys.stdout.write(" ")
+							
+							sys.stdout.write(f"\rwaiting for pass {current_pass} to finish. . . done [finished in {(end_time - start_time):.2f} seconds]\n\n")
+							
+							current_pass += 1
+							
+							if current_pass == 17:
+								break
+							
+							start_time = time.perf_counter()
+							continue
+						
+						end_time = time.perf_counter()
+						
+						tempfile_size = 0
+						
+						elapsed_time = end_time - start_time
+						mins, sec = divmod(elapsed_time, 60)
+						
+						i = (i + 1) % len(symbols)
+						
+						sys.stdout.write(f"\rwaiting for pass {current_pass} to finish. . . {symbols[i]} | ")
+						
+						sys.stdout.write(f"time elapsed: {int(mins)} minute{'s' if mins != 1 else ''} ")
+						sys.stdout.write(f"{int(sec)} second{'s' if sec != 1 else ''} ")
+						
+						sys.stdout.flush()
+						
+						time.sleep(0.1)
+					
+					total_end_time = time.time()
+					print(f"total time elapsed for {files[current_file]}: {(total_end_time - total_start_time):.2f} seconds\n")
+					print(worker_errors)
+			...
+
 	def parse_args(self):
 		main = Main()
 		
@@ -1649,7 +1590,7 @@ class Main:
 		global bar_total
 		
 		if cipher_method not in ["encrypt", "decrypt"]:
-			raise ValueError("Cipher method must be \"encrypt\" or \"decrypt\"")
+			raise ValueError(f'cipher_method expected "encrypt" or "decrypt", got {cipher_method}')
 		
 		files = []
 		folders = []
@@ -1748,7 +1689,7 @@ class Main:
 		global bar_total
 		
 		if cipher_method not in ["encrypt", "decrypt"]:
-			raise ValueError("Cipher method must be \"encrypt\" or \"decrypt\"")
+			raise ValueError(f'cipher_method expected "encrypt" or "decrypt", got {cipher_method}')
 		
 		files = []
 		files_errorlist = []
@@ -1761,12 +1702,8 @@ class Main:
 			if os.path.isdir(file):
 				file_errors.append(f"-f | File \"{file}\" is a directory!")
 			elif len(files) > 1:
-				# Don't throw an error for mass searching
-				file_errors.append(f"-f | File \"{file}\" isn't a file!")
+				print(f"Error: expected valid file path, got {file}")
 			else:
-				# Throw an error if less than two files are being processed
-				file_errors.append(f"-f | File \"{file}\" isn't a file!")
-
 				raise FileNotFoundError(f"File \"{file}\" isn't a file!")
 
 		for i, file in enumerate(files):
@@ -1841,7 +1778,7 @@ class Main:
 		global bar_total
 		
 		if cipher_method not in ["encrypt", "decrypt"]:
-			raise ValueError("Cipher method must be \"encrypt\" or \"decrypt\"")
+			raise ValueError(f'cipher_method expected "encrypt" or "decrypt", got {cipher_method}')
 		
 		files = []
 		files_errorlist = []
