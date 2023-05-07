@@ -26,8 +26,6 @@ import time
 import psutil
 import shutil
 
-import pathlib
-
 # Customization Modules
 import colorama
 from colorama import Fore, Back, Style
@@ -113,10 +111,6 @@ def progress_bar(iteration, total, prefix='', suffix='', decimals=1, length=50, 
 	Returns:
 		None
 		
-		str:
-		"CleanupInterrupt"
-		"BarDisabled" - Returns if the bar was disabled (probably from pycrypter interactive)
-		
 	Example usage:
 		progress_bar(10, 100, prefix='Progress:', suffix='Complete', decimals=1, length=50, fill='=')
 		
@@ -140,65 +134,11 @@ class ThreadManager:
 		
 	# thread worker
 	def worker(self, callback_function, semaphore=None, threads_set=None, *args, **kwargs):
-		"""
-		Call a function asynchronously using a worker function.
-		If this function is called using "worker()", this will not asynchronously execute.
-		
-		Parameters:
-			callback_function (func): callback function (required)
-				The function to asynchronously.
-				
-			*args: arguments passed (optional)
-				The arguments passed to the callback function.
-				
-			**kwargs: keyword arguments passed (optional)
-				The keyword arguments passed to the callback function.
-				
-		Returns:
-			None
-			
-			str: "CleanupInterrupt"
-			
-		Example usage:
-			Bare call (main thread call):
-				def my_func(arg1, arg2, kwarg1=""):
-					print(f"Arg1: {arg1} | Arg2: {arg2} | kwarg1: {kwarg1}")
-				
-				worker(my_func, "Arg1", "Arg2", kwarg1="MyKwarg")
-				
-				Output: Arg1: "Arg1" | Arg2: "Arg2" | kwarg1: "MyKwarg"
-			----------------------------------------------------------------
-			Note: Bare calling worker() will not call the callback_function asynchronously
-				
-			thread_create call (async call):
-				def my_func():
-					print("Simulating work. . .")
-					time.sleep(3)
-					print("Work done!")
-				
-				thread_create(my_func)
-				
-				print("Main thread starting!")
-				time.sleep(5)
-				
-				print("Main thread done!")
-				
-				Output:
-					Simulating work. . .
-					Main thread starting. . .
-					[3 second pause]
-					
-					Work done!
-					[2 second pause]
-					Main thread done!
-			------------------------------------------------------------------
-			Use thread_create() for asynchronous calls
-		"""
-		
+
 		if not threads_set:
 			threads_set = self.threads_set
 		
-		if not semaphore:
+		if not hasattr(semaphore, 'acquire'):
 			if semaphore == None:
 				semaphore = self.semaphore
 			else:
@@ -226,32 +166,11 @@ class ThreadManager:
 
 	# create a thread
 	def thread_create(self, callback, semaphore=None, threads_set=None, thread_name="", *args, **kwargs):
-		"""
-		Create a thread to call a function asynchronously.
-		
-		Parameters:
-			callback (func): callback function (required)
-				The function to asynchronously.
-				
-			thread_name (str): thread name (optional, defaults to "" [Empty string)
-				The name for the thread created.
-				
-			*args: arguments passed (optional)
-				The arguments passed to the callback function.
-				
-			**kwargs: keyword arguments passed (optional)
-				The keyword arguments passed to the callback function.
-				
-		Returns:
-			thread object
-			
-		Example usage: Refer to the docstring of the worker function. (worker.__doc__)
-		"""
-		
+
 		if not threads_set:
 			threads_set = self.threads_set
 		
-		if not semaphore:
+		if not hasattr(semaphore, 'acquire'):
 			if semaphore == None:
 				semaphore = self.semaphore
 			else:
@@ -290,14 +209,8 @@ def iterate_dir(directory, iterate_tree=True, skip_dirs=None):
 			Defines the sub-directories to exclude from the search.
 			
 		Returns:
-			list: file_paths
-				- The returned list will contain a relative/absolute path,
-				- depending if it's ".\\" or "C:\\".
-				
-				- Refer to example usage below
-			
-			[if the argument isn't a directory]
-				str: "NotADirectoryError"
+			set: file_paths
+			- Returns absolute paths
 				
 		Example usage:
 			Passing a non-boolean [True, False] to
@@ -417,139 +330,377 @@ def iterate_dir(directory, iterate_tree=True, skip_dirs=None):
 
 # |==================================================| Cipher functions |==================================================|
 
-# encryption function
-def encrypt_file(input_file=None, password="", keep_copy=False, hash_pepper=b"", password_pepper=b""):
-	"""
-	Define a function to encrypt a file in chunks
-	using the cryptography.Fernet module.
+class CipherManager:
+	def __init__(self):
+		...
 	
-	Parameters:
-		input_file (str): the input file (required)
-			The file passed to encrypt.
+	# encryption function
+	def encrypt_file(self, input_file, password="", keep_copy=False, hash_pepper=b"", password_pepper=b""):
+		"""
+		Define a function to encrypt a file in chunks
+		using the cryptography.Fernet module.
 		
-		password (str): password to use (optional, defaults to ""/empty string)
-			The password used to encrypt the file.
+		Parameters:
+			input_file (str): the input file (required)
+				The file passed to encrypt.
 			
-		keep_copy (bool): keep a copy of the decrypted file (optional, defaults to False)
-			Defines whether the script should keep a copy of the decrypted file.
-		
-		override_raise (bool): override function raise statements (optional, defaults to False)
-			This will override the function's raise statements, disabling them.
-	Returns:
-		int: 0 [Success]
-		
-		str:
-			[Cleanup] "CleanupInterrupt"
-			- This tells the script to stop executing
-			
-			[Error 1] "input_file == " + sys.argv[0] + " | Illegal operation"
-			- This error tells the user that the input file is the current script file.
-			
-			[Error 2] "File doesn't exist/isn't a file | file_error"
-			- This error tells the user that the file passed
-			- isn't a file or the file doesn't exist.
-			
-	Exceptions:
-		[Note: override_raise will disable these exceptions]
-		
-		[Exception 1] raise ValueError("keep_copy must be a valid boolean")
-		- This exception tells the user that the keep_copy argument
-		- must be a valid boolean. [True, False, 1, 0]
-		
-		[Exception 2] raise MemoryError(
-			f"The file \"{input_file}\" exceeds the maximum memory allowed to allocate. (Max: {max_mem} MB)")
-		
-		- This exception tells the user that the file passed is too large to process.
-		- [The file must be below memory_max_allocated, check the variables above]
-		
-	Example usage:
-		Passing the script file will return Error 1
-		
-		return_value = encrypt_file("pycrypter.py", password="MyPass", keep_copy=False)
-		print(return_value)
-		
-		[Output]
-		input_file == pycrypter.py | Illegal operation
-		
-		=================================================================
-		Passing a non-boolean to keep_copy will throw a ValueError [Exception 1]
-		
-		return_value = encrypt_file("pycrypter.py", password="MyPass", keep_copy="No")
-		print(return_value)
-		
-		[Output]
-		Traceback (most recent call last):
-		  File "C:\\MyPython\\pycrypter.py", line 1, in <module>
-			raise ValueError("keep_copy must be a valid boolean")
-		ValueError: keep_copy must be a valid boolean
-		
-		=================================================================
-		Passing a directory/non-existent file will return Error 2
-		
-		return_value_1 = encrypt_file("not_a_file", password="MyPass", keep_copy=False)
-		return_value_2 = encrypt_file("someFakeFile.txt", password="MyPass", keep_copy=False)
-		
-		print(return_value_1)
-		print(return_value_2)
-		
-		[Output]
-		File doesn't exist/isn't a file | file_error
-		File doesn't exist/isn't a file | file_error
-		
-		=================================================================
-		Passing a file that exceeds memory_max_allocated will throw a MemoryError [Exception 2]
-		
-		return_value = encrypt_file("MyLargeFile.txt", password="MyPass", keep_copy=False)
-		print(return_value)
-		
-		[Output]
-		Traceback (most recent call last):
-		  File "C:\MyPython\pycrypter.py", line 1, in <module>
-			raise MemoryError(f"The file \"{input_file}\" exceeds the maximum memory allowed to allocate. (Max: {max_mem} MB)")
-			
-		MemoryError: The file "MyLargeFile.txt" exceeds the maximum memory allowed to allocate. (Max: 300.00 MB)
-		
-		------------------------------------------------------------------
-		
-		Basic usage:
-			# We can assume that text.txt's contents is this:
-			# This is my text in this .txt file
-			
-			return_value = encrypt_file("test.txt", password="MyPass", keep_copy=False)
-			print(return_value) # This would print the integer "0"
-			
-			with open("test.txt", "r") as file:
-				print(file.read())
+			password (str): password to use (optional, defaults to ""/empty string)
+				The password used to encrypt the file.
 				
-			[Output]
-			0
-			Áî¼Ç6Ò–—0¡sIZéã†¸ëïÖa↕Ò¯;¶ª“QgAAAAABkRw0N50WP2VQ
-			-q6i2jeCkVRExdZSvzChp1CFx_wKiPAvv7J6OJr4QFZIguTjp2P_ylVz31Z_kBye_TxjbV_5SAi3b4gSRpJMYkMXqSRFLslJyn1D6s_Hkc8EkgedWHOIqBEXc
+			keep_copy (bool): keep a copy of the decrypted file (optional, defaults to False)
+				Defines whether the script should keep a copy of the decrypted file.
 			
-			# The ciphertext above was separated into two lines to fit it in this docstring
-	"""
+			override_raise (bool): override function raise statements (optional, defaults to False)
+				This will override the function's raise statements, disabling them.
+		Returns:
+			int: 0 [Success]
+			
+			str:
+				[Cleanup] "CleanupInterrupt"
+				- This tells the script to stop executing
+				
+				[Error 1] "input_file == " + sys.argv[0] + " | Illegal operation"
+				- This error tells the user that the input file is the current script file.
+				
+				[Error 2] "File doesn't exist/isn't a file | file_error"
+				- This error tells the user that the file passed
+				- isn't a file or the file doesn't exist.
+				
+		Exceptions:
+			[Note: override_raise will disable these exceptions]
+			
+			[Exception 1] raise ValueError("keep_copy must be a valid boolean")
+			- This exception tells the user that the keep_copy argument
+			- must be a valid boolean. [True, False, 1, 0]
+			
+			[Exception 2] raise MemoryError(
+				f"The file \"{input_file}\" exceeds the maximum memory allowed to allocate. (Max: {max_mem} MB)")
+			
+			- This exception tells the user that the file passed is too large to process.
+			- [The file must be below memory_max_allocated, check the variables above]
+			
+		Example usage:
+			Passing the script file will return Error 1
+			
+			return_value = encrypt_file("pycrypter.py", password="MyPass", keep_copy=False)
+			print(return_value)
+			
+			[Output]
+			input_file == pycrypter.py | Illegal operation
+			
+			=================================================================
+			Passing a non-boolean to keep_copy will throw a ValueError [Exception 1]
+			
+			return_value = encrypt_file("pycrypter.py", password="MyPass", keep_copy="No")
+			print(return_value)
+			
+			[Output]
+			Traceback (most recent call last):
+			  File "C:\\MyPython\\pycrypter.py", line 1, in <module>
+				raise ValueError("keep_copy must be a valid boolean")
+			ValueError: keep_copy must be a valid boolean
+			
+			=================================================================
+			Passing a directory/non-existent file will return Error 2
+			
+			return_value_1 = encrypt_file("not_a_file", password="MyPass", keep_copy=False)
+			return_value_2 = encrypt_file("someFakeFile.txt", password="MyPass", keep_copy=False)
+			
+			print(return_value_1)
+			print(return_value_2)
+			
+			[Output]
+			File doesn't exist/isn't a file | file_error
+			File doesn't exist/isn't a file | file_error
+			
+			=================================================================
+			Passing a file that exceeds memory_max_allocated will throw a MemoryError [Exception 2]
+			
+			return_value = encrypt_file("MyLargeFile.txt", password="MyPass", keep_copy=False)
+			print(return_value)
+			
+			[Output]
+			Traceback (most recent call last):
+			  File "C:\MyPython\pycrypter.py", line 1, in <module>
+				raise MemoryError(f"The file \"{input_file}\" exceeds the maximum memory allowed to allocate. (Max: {max_mem} MB)")
+				
+			MemoryError: The file "MyLargeFile.txt" exceeds the maximum memory allowed to allocate. (Max: 300.00 MB)
+			
+			------------------------------------------------------------------
+			
+			Basic usage:
+				# We can assume that text.txt's contents is this:
+				# This is my text in this .txt file
+				
+				return_value = encrypt_file("test.txt", password="MyPass", keep_copy=False)
+				print(return_value) # This would print the integer "0"
+				
+				with open("test.txt", "r") as file:
+					print(file.read())
+					
+				[Output]
+				0
+				Áî¼Ç6Ò–—0¡sIZéã†¸ëïÖa↕Ò¯;¶ª“QgAAAAABkRw0N50WP2VQ
+				-q6i2jeCkVRExdZSvzChp1CFx_wKiPAvv7J6OJr4QFZIguTjp2P_ylVz31Z_kBye_TxjbV_5SAi3b4gSRpJMYkMXqSRFLslJyn1D6s_Hkc8EkgedWHOIqBEXc
+				
+				# The ciphertext above was separated into two lines to fit it in this docstring
+		"""
 	
-	# Guard clauses
-	if not input_file:
-		raise TypeError(f"missing 1 required keyword argument: input_file")
-	
-	if input_file == sys.argv[0]:
-		raise ValueError(f"illegal operation [input_file == {sys.argv[0]}]")
+		# Guard clauses
+		if input_file == sys.argv[0]:
+			raise ValueError(f"illegal operation [input_file == {sys.argv[0]}]")
 
-	if keep_copy not in [True, False]:
-		raise TypeError(f'keep_copy expected boolean, got {keep_copy}')
+		if keep_copy not in [True, False]:
+			raise TypeError(f'keep_copy expected boolean, got {keep_copy}')
 
-	# Check argument if it's a file
-	if not os.path.isfile(input_file):
-		if os.path.isdir(input_file):
-			raise IsADirectoryError(f"[Errno 21] Is a directory: {input_file}")
-		else:
-			raise FileNotFoundError(f"[Errno 2] No such file: {input_file}")
-	
-	# Encrypt the file in chunks
-	with open(input_file, "rb+") as file:
-		file_size = os.path.getsize(input_file)
+		# Check argument if it's a file
+		if not os.path.isfile(input_file):
+			if os.path.isdir(input_file):
+				raise IsADirectoryError(f"[Errno 21] Is a directory: {input_file}")
+			else:
+				raise FileNotFoundError(f"[Errno 2] No such file: {input_file}")
 		
+		# Encrypt the file in chunks
+		with open(input_file, "rb+") as file:
+			file_size = os.path.getsize(input_file)
+			
+			if file_size > (2 * 1024 * 1024 * 1024):
+				print(f"{Fore.YELLOW}Warning: encrypt_file has detected that {input_file} is larger than 2GB, do not kill the python process.")
+			
+			salt = os.urandom(32)
+
+			kdf = PBKDF2HMAC(
+				algorithm=hashes.SHA256(),
+				length=32,
+				salt=salt+hash_pepper,
+				iterations=100000
+			)
+			
+			key = None
+			
+			if isinstance(password, bytes):
+				key = kdf.derive(password + password_pepper)
+			else:
+				key = kdf.derive(password.encode() + password_pepper)
+			
+			fernet_key = base64.urlsafe_b64encode(key)
+			
+			file.seek(0, os.SEEK_SET)
+			chunk = file.read(50 * 1024 * 1024)
+			
+			file.seek(0, os.SEEK_SET)
+			file.write(salt)
+			
+			if keep_copy:
+				file_name, file_ext = os.path.splitext(input_file)
+				shutil.copy2(input_file, f"{file_name}_decrypted-copy{file_ext}")
+
+			while chunk:
+				chunk_encrypted = Fernet(fernet_key).encrypt(chunk)
+				file.write(chunk_encrypted)
+				
+				chunk = file.read(50 * 1024 * 1024)  # Read 50MB at a time
+		return 0
+
+	# decryption function
+	def decrypt_file(self, input_file, password="", keep_copy=False, hash_pepper=b"", password_pepper=b""):
+		"""
+		Define a function to decrypt a file in chunks
+		using the cryptography.Fernet module.
+		
+		Parameters:
+			input_file (str): the input file (required)
+				The file passed to decrypt.
+			
+			password (str): password to use (optional, defaults to ""/empty string)
+				The password used to decrypt the file.
+				
+			keep_copy (bool): keep a copy of the decrypted file (optional, defaults to False)
+				Defines whether the script should keep a copy of the encrypted file.
+				
+		Returns:
+			int: 0 [Success]
+			
+			str:
+				[Cleanup] "CleanupInterrupt"
+				- This tells the script to stop executing
+				
+				[Error 1] "input_file == " + sys.argv[0] + " | Illegal operation"
+				- This error tells the user that the input file is the current script file.
+				
+				[Error 2] "File doesn't exist/isn't a file | file_error"
+				- This error tells the user that the file passed
+				- isn't a file or the file doesn't exist.
+				
+		Exceptions:
+			[Exception 1] raise ValueError("keep_copy must be a valid boolean")
+			- This exception tells the user that the keep_copy argument
+			- must be a valid boolean. [True, False, 1, 0]
+			
+			[Exception 2] raise MemoryError(
+				f"The file \"{input_file}\" exceeds the maximum memory allowed to allocate. (Max: {max_mem} MB)")
+			
+			- This exception tells the user that the file passed is too large to process.
+			- [The file must be below 300MB]
+			
+			[Exception 3] raise DecryptionError(f"The key \"{password}\" is invalid.")
+			- This exception indicates that the password passed is invalid.
+			- Note: This exception is a custom defined exception
+			
+		Example usage:
+			Passing the script file will return Error 1
+			
+			return_value = decrypt_file("pycrypter.py", password="MyPass", keep_copy=False)
+			print(return_value)
+			
+			[Output]
+			input_file == pycrypter.py | Illegal operation
+			
+			=================================================================
+			Passing a non-boolean to keep_copy will throw a ValueError [Exception 1]
+			
+			return_value = decrypt_file("pycrypter.py", password="MyPass", keep_copy="No")
+			print(return_value)
+			
+			[Output]
+			Traceback (most recent call last):
+			  File "C:\\MyPython\\pycrypter.py", line 1, in <module>
+				raise ValueError("keep_copy must be a valid boolean")
+			ValueError: keep_copy must be a valid boolean
+			
+			=================================================================
+			Passing a directory/non-existent file will return Error 2
+			
+			return_value_1 = decrypt_file("not_a_file", password="MyPass", keep_copy=False)
+			return_value_2 = decrypt_file("someFakeFile.txt", password="MyPass", keep_copy=False)
+			
+			print(return_value_1)
+			print(return_value_2)
+			
+			[Output]
+			File doesn't exist/isn't a file | file_error
+			File doesn't exist/isn't a file | file_error
+			
+			=================================================================
+			Passing a file that exceeds memory_max_allocated will throw a MemoryError [Exception 2]
+			
+			return_value = decrypt_file("MyLargeFile.txt", password="MyPass", keep_copy=False)
+			print(return_value)
+			
+			[Output]
+			Traceback (most recent call last):
+			  File "C:\MyPython\pycrypter.py", line 1, in <module>
+				raise MemoryError(f"The file \"{input_file}\" exceeds the maximum memory allowed to allocate. (Max: {max_mem} MB)")
+				
+			MemoryError: The file "MyLargeFile.txt" exceeds the maximum memory allowed to allocate. (Max: 300.00 MB)
+			
+			=================================================================
+			Passing the wrong password will throw a custom defined DecryptionError [Exception 3]
+			
+			return_value = decrypt_file("text.txt", password="WrongPassword", keep_copy=False)
+			print(return_value)
+			
+			[Output]
+			Traceback (most recent call last):
+			  File "C:\MyPython\pycrypter.py", line 1, in <module>
+				raise DecryptionError(f"The key \"{password}\" is invalid.")
+			
+			DecryptionError: The key "WrongPassword" is invalid.
+			------------------------------------------------------------------
+			
+			Basic usage:
+				# We can assume that text.txt's contents is this ciphertext:
+				# [Had to split it into two lines for this documentation]
+				
+				# Áî¼Ç6Ò–—0¡sIZéã†¸ëïÖa↕Ò¯;¶ª“QgAAAAABkRw0N50WP2VQ
+				# -q6i2jeCkVRExdZSvzChp1CFx_wKiPAvv7J6OJr4QFZIguTjp2P_ylVz31Z_kBye_TxjbV_5SAi3b4gSRpJMYkMXqSRFLslJyn1D6s_Hkc8EkgedWHOIqBEXc
+				
+				return_value = decrypt_file("test.txt", password="MyPass", keep_copy=False)
+				print(return_value) # This would print the integer "0"
+				
+				with open("test.txt", "r") as file:
+					print(file.read())
+					
+				[Output]
+				0
+				This is my text in this .txt file
+		"""
+
+		# Guard clauses
+		if input_file == sys.argv[0]:
+			raise ValueError(f"illegal operation [input_file == {sys.argv[0]}]")
+
+		if keep_copy not in [True, False]:
+			raise TypeError(f'expected boolean, got {keep_copy}')
+
+		# Check argument if it's a file
+		if not os.path.isfile(input_file):
+			if os.path.isdir(input_file):
+				raise IsADirectoryError(f"[Errno 21] Is a directory: {input_file}")
+			else:
+				raise FileNotFoundError(f"[Errno 2] No such file: {input_file}")
+
+		# Decrypt the file in chunks
+		with open(input_file, "rb+") as file:
+			file_size = os.path.getsize(input_file)
+			
+			if file_size > (2 * 1024 * 1024 * 1024):
+				print(f"{Fore.YELLOW}Warning: decrypt_file has detected that {input_file} is larger than 2GB, do not kill the python process.")
+			
+			salt = file.read(32)
+				
+			kdf = PBKDF2HMAC(
+				algorithm=hashes.SHA256(),
+				length=32,
+				salt=salt+hash_pepper,
+				iterations=100000
+			)
+			
+			if isinstance(password, bytes):
+				key = kdf.derive(password + password_pepper)
+			else:
+				key = kdf.derive(password.encode() + password_pepper)
+			
+			fernet_key = base64.urlsafe_b64encode(key)
+			
+			file.seek(32, os.SEEK_SET)
+			chunk = file.read(50 * 1024 * 1024)
+			
+			decrypt_successful = False
+			
+			try:
+				chunk_encrypted = Fernet(fernet_key).decrypt(chunk)
+				decrypt_successful = True
+			except cryptography.fernet.InvalidToken as error:
+				raise ValueError("Invalid key") from error
+			finally:
+				file.close() if not decrypt_successful else None
+			
+			# Erase/keep the file
+			if keep_copy:
+				file_name, file_ext = os.path.splitext(input_file)
+				shutil.copy2(input_file, f"{file_name}_decrypted-copy{file_ext}")
+			
+			cursor_position = None
+			plaintext_end = 0
+			
+			while chunk:
+				chunk_decrypted = Fernet(fernet_key).decrypt(chunk)
+				plaintext_end += len(chunk_decrypted)
+				
+				cursor_position = file.tell()
+				
+				file.seek(0, os.SEEK_SET)
+				file.write(chunk_decrypted)
+				
+				file.seek(cursor_position, os.SEEK_SET)
+				chunk = file.read(50 * 1024 * 1024)
+			
+			file.truncate(plaintext_end)
+		return 0
+		
+	# encryption function
+	def encrypt_data(self, data, password="", hash_pepper=b"", password_pepper=b""):
 		salt = os.urandom(32)
 
 		kdf = PBKDF2HMAC(
@@ -558,9 +709,9 @@ def encrypt_file(input_file=None, password="", keep_copy=False, hash_pepper=b"",
 			salt=salt+hash_pepper,
 			iterations=100000
 		)
-		
+			
 		key = None
-		
+			
 		if isinstance(password, bytes):
 			key = kdf.derive(password + password_pepper)
 		else:
@@ -568,216 +719,42 @@ def encrypt_file(input_file=None, password="", keep_copy=False, hash_pepper=b"",
 		
 		fernet_key = base64.urlsafe_b64encode(key)
 		
-		file.seek(0, os.SEEK_SET)
-		chunk = file.read(50 * 1024 * 1024)
+		if not isinstance(data, bytes):
+			data = data.encode()
 		
-		file.seek(0, os.SEEK_SET)
-		file.write(salt)
+		encrypted_data = salt + Fernet(fernet_key).encrypt(data) 
+		data = None
 		
-		if keep_copy:
-			file_name, file_ext = os.path.splitext(input_file)
-			shutil.copy2(input_file, f"{file_name}_decrypted-copy{file_ext}")
+		return encrypted_data
 
-		while chunk:
-			chunk_encrypted = Fernet(fernet_key).encrypt(chunk)
-			file.write(chunk_encrypted)
-			
-			chunk = file.read(50 * 1024 * 1024)  # Read 50MB at a time
-	return 0
-
-# decryption function
-def decrypt_file(input_file, password="", keep_copy=False, hash_pepper=b"", password_pepper=b""):
-	"""
-	Define a function to decrypt a file in chunks
-	using the cryptography.Fernet module.
-	
-	Parameters:
-		input_file (str): the input file (required)
-			The file passed to decrypt.
-		
-		password (str): password to use (optional, defaults to ""/empty string)
-			The password used to decrypt the file.
-			
-		keep_copy (bool): keep a copy of the decrypted file (optional, defaults to False)
-			Defines whether the script should keep a copy of the encrypted file.
-			
-	Returns:
-		int: 0 [Success]
-		
-		str:
-			[Cleanup] "CleanupInterrupt"
-			- This tells the script to stop executing
-			
-			[Error 1] "input_file == " + sys.argv[0] + " | Illegal operation"
-			- This error tells the user that the input file is the current script file.
-			
-			[Error 2] "File doesn't exist/isn't a file | file_error"
-			- This error tells the user that the file passed
-			- isn't a file or the file doesn't exist.
-			
-	Exceptions:
-		[Exception 1] raise ValueError("keep_copy must be a valid boolean")
-		- This exception tells the user that the keep_copy argument
-		- must be a valid boolean. [True, False, 1, 0]
-		
-		[Exception 2] raise MemoryError(
-			f"The file \"{input_file}\" exceeds the maximum memory allowed to allocate. (Max: {max_mem} MB)")
-		
-		- This exception tells the user that the file passed is too large to process.
-		- [The file must be below 300MB]
-		
-		[Exception 3] raise DecryptionError(f"The key \"{password}\" is invalid.")
-		- This exception indicates that the password passed is invalid.
-		- Note: This exception is a custom defined exception
-		
-	Example usage:
-		Passing the script file will return Error 1
-		
-		return_value = decrypt_file("pycrypter.py", password="MyPass", keep_copy=False)
-		print(return_value)
-		
-		[Output]
-		input_file == pycrypter.py | Illegal operation
-		
-		=================================================================
-		Passing a non-boolean to keep_copy will throw a ValueError [Exception 1]
-		
-		return_value = decrypt_file("pycrypter.py", password="MyPass", keep_copy="No")
-		print(return_value)
-		
-		[Output]
-		Traceback (most recent call last):
-		  File "C:\\MyPython\\pycrypter.py", line 1, in <module>
-			raise ValueError("keep_copy must be a valid boolean")
-		ValueError: keep_copy must be a valid boolean
-		
-		=================================================================
-		Passing a directory/non-existent file will return Error 2
-		
-		return_value_1 = decrypt_file("not_a_file", password="MyPass", keep_copy=False)
-		return_value_2 = decrypt_file("someFakeFile.txt", password="MyPass", keep_copy=False)
-		
-		print(return_value_1)
-		print(return_value_2)
-		
-		[Output]
-		File doesn't exist/isn't a file | file_error
-		File doesn't exist/isn't a file | file_error
-		
-		=================================================================
-		Passing a file that exceeds memory_max_allocated will throw a MemoryError [Exception 2]
-		
-		return_value = decrypt_file("MyLargeFile.txt", password="MyPass", keep_copy=False)
-		print(return_value)
-		
-		[Output]
-		Traceback (most recent call last):
-		  File "C:\MyPython\pycrypter.py", line 1, in <module>
-			raise MemoryError(f"The file \"{input_file}\" exceeds the maximum memory allowed to allocate. (Max: {max_mem} MB)")
-			
-		MemoryError: The file "MyLargeFile.txt" exceeds the maximum memory allowed to allocate. (Max: 300.00 MB)
-		
-		=================================================================
-		Passing the wrong password will throw a custom defined DecryptionError [Exception 3]
-		
-		return_value = decrypt_file("text.txt", password="WrongPassword", keep_copy=False)
-		print(return_value)
-		
-		[Output]
-		Traceback (most recent call last):
-		  File "C:\MyPython\pycrypter.py", line 1, in <module>
-			raise DecryptionError(f"The key \"{password}\" is invalid.")
-		
-		DecryptionError: The key "WrongPassword" is invalid.
-		------------------------------------------------------------------
-		
-		Basic usage:
-			# We can assume that text.txt's contents is this ciphertext:
-			# [Had to split it into two lines for this documentation]
-			
-			# Áî¼Ç6Ò–—0¡sIZéã†¸ëïÖa↕Ò¯;¶ª“QgAAAAABkRw0N50WP2VQ
-			# -q6i2jeCkVRExdZSvzChp1CFx_wKiPAvv7J6OJr4QFZIguTjp2P_ylVz31Z_kBye_TxjbV_5SAi3b4gSRpJMYkMXqSRFLslJyn1D6s_Hkc8EkgedWHOIqBEXc
-			
-			return_value = decrypt_file("test.txt", password="MyPass", keep_copy=False)
-			print(return_value) # This would print the integer "0"
-			
-			with open("test.txt", "r") as file:
-				print(file.read())
+	# decryption function
+	def decrypt_data(self, data, password="", hash_pepper=b"", password_pepper=b""):
+		salt = data[:32]
 				
-			[Output]
-			0
-			This is my text in this .txt file
-	"""
-
-	# Guard clauses
-	if input_file == sys.argv[0]:
-		raise ValueError(f"illegal operation [input_file == {sys.argv[0]}]")
-
-	if keep_copy not in [True, False]:
-		raise TypeError(f'expected boolean, got {keep_copy}')
-
-	# Check argument if it's a file
-	if not os.path.isfile(input_file):
-		if os.path.isdir(input_file):
-			raise IsADirectoryError(f"[Errno 21] Is a directory: {input_file}")
-		else:
-			raise FileNotFoundError(f"[Errno 2] No such file: {input_file}")
-
-	# Decrypt the file in chunks
-	with open(input_file, "rb+") as file:
-		file_size = os.path.getsize(input_file)
-		
-		salt = file.read(32)
-			
 		kdf = PBKDF2HMAC(
 			algorithm=hashes.SHA256(),
 			length=32,
 			salt=salt+hash_pepper,
 			iterations=100000
 		)
-		
+			
 		if isinstance(password, bytes):
 			key = kdf.derive(password + password_pepper)
 		else:
 			key = kdf.derive(password.encode() + password_pepper)
-		
+			
 		fernet_key = base64.urlsafe_b64encode(key)
 		
-		file.seek(32, os.SEEK_SET)
-		chunk = file.read(50 * 1024 * 1024)
-		
-		decrypt_successful = False
+		decrypted_data = b""
 		
 		try:
-			chunk_encrypted = Fernet(fernet_key).decrypt(chunk)
-			decrypt_successful = True
+			decrypted_data = Fernet(fernet_key).decrypt(data[32:])
 		except cryptography.fernet.InvalidToken as error:
-			raise ValueError("Invalid key") from error
+			raise error
 		finally:
-			file.close() if not decrypt_successful else None
+			data = None
 		
-		# Erase/keep the file
-		if keep_copy:
-			file_name, file_ext = os.path.splitext(input_file)
-			shutil.copy2(input_file, f"{file_name}_decrypted-copy{file_ext}")
-		
-		cursor_position = None
-		plaintext_end = 0
-		
-		while chunk:
-			chunk_decrypted = Fernet(fernet_key).decrypt(chunk)
-			plaintext_end += len(chunk_decrypted)
-			
-			cursor_position = file.tell()
-			
-			file.seek(0, os.SEEK_SET)
-			file.write(chunk_decrypted)
-			
-			file.seek(cursor_position, os.SEEK_SET)
-			chunk = file.read(50 * 1024 * 1024)
-		
-		file.truncate(plaintext_end)
-	return 0
+		return decrypted_data
 
 # Overwrite deletion
 def file_overwrite(file_path, file_size):
@@ -923,6 +900,11 @@ class Main:
 		# misc
 		self.thread_mgr = ThreadManager()
 		self.thread_create = ThreadManager().thread_create
+		
+		self.cleanup_mgr = CipherManager()
+		
+		self.encrypt_file = CipherManager().encrypt_file
+		self.decrypt_file = CipherManager().decrypt_file
 		
 		# self.parser objects
 		self.args = None
@@ -1328,7 +1310,7 @@ class Main:
 					current_file_size = os.path.getsize(files[current_file])
 					
 					def call_cipher(cipher_mode="encrypt", *args):
-						encrypt_file(*args) if cipher_mode == "encrypt" else decrypt_file(*args)
+						self.encrypt_file(*args) if cipher_mode == "encrypt" else self.decrypt_file(*args)
 						
 						self.interactive[f"{files[current_file]} | cipher_complete"]
 						
@@ -1519,9 +1501,9 @@ class Main:
 			
 			def call_cipher(*args, **kwargs):
 				if cipher_method == "encrypt":
-					encrypt_file(*args, **kwargs)
+					self.encrypt_file(*args, **kwargs)
 				else:
-					decrypt_file(*args, **kwargs)
+					self.decrypt_file(*args, **kwargs)
 				
 			thread = self.thread_create(
 				callback = call_cipher,
@@ -1589,9 +1571,9 @@ class Main:
 			
 			def call_cipher(*args, **kwargs):
 				if cipher_method == "encrypt":
-					encrypt_file(*args, **kwargs)
+					self.encrypt_file(*args, **kwargs)
 				else:
-					decrypt_file(*args, **kwargs)
+					self.decrypt_file(*args, **kwargs)
 				
 			thread = self.thread_create(
 				callback = call_cipher,
