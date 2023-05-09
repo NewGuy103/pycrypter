@@ -928,8 +928,8 @@ class Main:
 			raise RuntimeError("class Main must be called as __main__")
 
 		# pepper | DO NOT LEAK THIS!
-		self.hash_pepper = b'\xf0f\x9e\x10\xca\xbf\xca\xc4\xf1\xfd\xee\x00\xab7b\xc8\x1em1`\xb1\x821b\xf8&\xa1\xa9(\xb0\xa6\x0b'
-		self.password_pepper = b'\xd3\x9dh4N\x0c\xbc\xac\x17\xc1\xd7\xa5\x88\x8a2\xceI\x96\x10\x86A\n@\x19\x12\xfc\x8bi\xc8\tIA'
+		self.hash_pepper = b'' # Put your own pepper
+		self.password_pepper = b'' # Put your own pepper
 		
 		self.main_dict = {
 			"bar_iteration": 0,
