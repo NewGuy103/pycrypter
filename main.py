@@ -331,9 +331,6 @@ def iterate_dir(directory, iterate_tree=True, skip_dirs=None):
 # |==================================================| Cipher functions |==================================================|
 
 class CipherManager:
-	def __init__(self):
-		...
-	
 	# encryption function
 	def encrypt_file(self, input_file, password="", keep_copy=False, hash_pepper=b"", password_pepper=b""):
 		"""
@@ -672,7 +669,7 @@ class CipherManager:
 				chunk_encrypted = Fernet(fernet_key).decrypt(chunk)
 				decrypt_successful = True
 			except cryptography.fernet.InvalidToken as error:
-				raise ValueError("Invalid key") from error
+				raise error
 			finally:
 				file.close() if not decrypt_successful else None
 			
@@ -757,85 +754,136 @@ class CipherManager:
 		return decrypted_data
 
 # Overwrite deletion
-def file_overwrite(file_path, file_size):
-	global cleanup_status
+class DataOverwriter:
+	def __init__(self):
+		self.cleanup = False
 	
-	with open(file_path, 'wb') as file:
-		original_size = file_size
-		
-		# Overwrite with a random bytearray
-		chunk = 50 * 1024 * 1024
-		file.truncate(0)		
-		
-		for pass_iteration in range(16):
-			file_size = original_size
-			chunk_data = None
-			
-			if pass_iteration in [0, 1]:
-				chunk_data = bytearray([0x00, 0x00]) # First pass
-								
-			elif pass_iteration in [2, 3]:
-				chunk_data = bytearray([0xFF, 0xFF]) # Second pass
-								
-			elif pass_iteration in [4, 5]:
-				chunk_data = bytearray([0x55, 0xAA]) # Third pass
-									
-			elif pass_iteration in [6, 7]:
-				chunk_data = bytearray([0xAA, 0x55]) # Fourth pass
-								
-			else:
-				chunk_data = os.urandom(2) # All other passes
-			
-			while file_size > 0:
-				chunk = min(file_size, 50 * 1024 * 1024)
-				
-				file.write(chunk_data * chunk)
-				file_size -= chunk
-			
-			file.truncate(0)
-			interactive[f"{file_path} | pass{pass_iteration + 1}_complete"] = True
-		
-	# Delete the file
-	os.remove(file_path)
-			
-def freespace_overwrite():
-	with open("disk_filler_file.tmp", 'wb') as file:
+	def stop(self):
+		self.cleanup = True
+	
+	def file_overwrite(self, file_path, file_size=0, chunk_size=100 * 1024 * 1024):
 		try:
-			usage = psutil.disk_usage("C:\\")
+			if not isinstance(chunk_size, (int, float)):
+				raise TypeError(f"chunk_size expected int/float, got {type(chunk_size).__name__}")
 			
-			# Allow 1 GB to be allocated to prevent out of disk issues
-			original_free_space = int(format(usage.free // (1024 * 1024 * 1024))) - 1
-			chunk = 500 * 1024 * 1024
+			file_path = os.path.abspath(file_path)
 			
-			for pass_iteration in range(3):
-				free_space = original_free_space
-				chunk_data = None
+			if file_size < 1:
+				file_size = os.path.getsize(file_path)
+			
+			memory = psutil.virtual_memory()
+			
+			memory_available = float(format(memory.available / (1024 * 1024 * 1024)))
+			memory_total = float(format(memory.total / (1024 * 1024 * 1024)))
+			
+			if chunk_size > memory_total:
+				raise MemoryError(f"chunk size ({chunk_size:.2f} GB) exceeds total memory available ({memory_total:.2f} GB)")
+			elif chunk_size > memory_available:
+				raise MemoryError(f"chunk size ({chunk_size:.2f} GB) exceeds available memory ({memory_available:.2f} GB)")
+			
+			with open(file_path, 'wb') as file:
+				original_size = file_size
 				
-				if pass_iteration == 0:
-					chunk_data = bytearray([0x00, 0x00])
+				# Overwrite with a random bytearray
+				chunk = chunk_size
+				file.truncate(0)		
+				
+				for pass_iteration in range(16):
+					file_size = original_size
+					chunk_data = None
 					
-				elif pass_iteration == 1:
-					chunk_data = bytearray([0xFF, 0xFF])
-				
-				elif pass_iteration == 2:
-					chunk_data = os.urandom(2)
-				
-				while free_space > 0:
-					file.write(chunk_data * chunk)
-					free_space -= chunk
+					if pass_iteration in [0, 1]:
+						chunk_data = bytearray([0x00, 0x00]) # First pass
+										
+					elif pass_iteration in [2, 3]:
+						chunk_data = bytearray([0xFF, 0xFF]) # Second pass
+										
+					elif pass_iteration in [4, 5]:
+						chunk_data = bytearray([0x55, 0xAA]) # Third pass
+											
+					elif pass_iteration in [6, 7]:
+						chunk_data = bytearray([0xAA, 0x55]) # Fourth pass
+										
+					else:
+						chunk_data = os.urandom(2) # All other passes
+					
+					while file_size > 0:
+						if self.cleanup:
+							file.truncate(0)
+							file.close()
+							
+							os.remove(file_path)
+							return
 						
-				interactive[f"freespace_overwrite | pass{pass_iteration + 1}_complete"] = True
-				os.fsync(file.fileno())
+						chunk = min(file_size, chunk_size)
+						
+						file.write(chunk_data * chunk)
+						file_size -= chunk
+					
+					os.fsync(file.fileno())
+					file.truncate(0)
+		except PermissionError:
+			print(f"PermissionError caught, cannot open {file_path}")
+		finally:
+			os.remove(file_path)
+
+	def freespace_overwrite(self, disk_drive, chunk_size=500 * 1024 * 1024):
+		file_name = "disk_filler_file.tmp"
+		
+		try:
+			if not isinstance(chunk_size, (int, float)):
+				raise TypeError(f"chunk_size expected int/float, got {type(chunk_size).__name__}")
+			
+			memory = psutil.virtual_memory()
+			
+			memory_available = memory.available
+			memory_total = memory.total
+			
+			if chunk_size > memory_total:
+				raise MemoryError(f"chunk size ({chunk_size:.2f} GB) exceeds total memory available ({memory_total:.2f} GB)")
+			elif chunk_size > memory_available:
+				raise MemoryError(f"chunk size ({chunk_size:.2f} GB) exceeds available memory ({memory_available:.2f} GB)")
+			
+			with open(file_name, 'wb') as file:
+				usage = psutil.disk_usage(disk_drive)
+				usage_free = usage.free
 				
-				file.truncate(0)
-			
-			file.close()
-			os.remove("disk_filler_file.tmp")
-		except Exception as err:
-			err_name = type(err).__name__
-			
-			print(f"freespace_overwrite | An unexpected error occured! Details: \n")
-			traceback.print_exc()
+				# Allow 1 GB to be allocated to prevent out of disk issues
+				original_free_space = int(format(usage_free // (1024 * 1024 * 1024))) - 1
+				chunk_size = 500 * 1024 * 1024
+				
+				chunk = chunk_size
+					
+				for pass_iteration in range(3):
+					free_space = original_free_space
+					chunk_data = None
+						
+					if pass_iteration == 0:
+						chunk_data = bytearray([0x00, 0x00])
+							
+					elif pass_iteration == 1:
+						chunk_data = bytearray([0xFF, 0xFF])
+						
+					elif pass_iteration == 2:
+						chunk_data = os.urandom(2)
+						
+					while free_space > 0:
+						if self.cleanup:
+							file.truncate(0)
+							file.close()
+							
+							os.remove(file_name)
+							return
+						
+						file.write(chunk_data * chunk)
+						free_space -= chunk
+					
+					os.fsync(file.fileno())
+					file.truncate(0)
+		except PermissionError as error:
+			raise error
+		finally:
+			os.remove(file_name) if os.path.isfile(file_name) else None
 
 # Final debugging information, executed after everything
 def debug_info(interactive_call=False):
@@ -901,8 +949,6 @@ class Main:
 		self.thread_mgr = ThreadManager()
 		self.thread_create = ThreadManager().thread_create
 		
-		self.cleanup_mgr = CipherManager()
-		
 		self.encrypt_file = CipherManager().encrypt_file
 		self.decrypt_file = CipherManager().decrypt_file
 		
@@ -939,7 +985,7 @@ class Main:
 			'-ds', "--deep-search",
 			action="store_true",
 			help='If specified, search the sub-folders of the directory specified.'
-		)
+		)	
 
 		self.parser.add_argument(
 			'-c', "--keep-copy",
@@ -1203,15 +1249,9 @@ class Main:
 						print("fdel canceled, returning. . .")
 						continue
 					
-					set_progress_bar = False
-					
 					symbols = ['\\', '|', '/', '-']
-					i = 0
 					
-					for pass_iteration in range(3):
-						self.interactive[f"freespace_overwrite | pass{pass_iteration + 1}_complete"] = False
-				
-					current_pass = 1
+					i = 0
 					
 					thread = self.thread_create(
 						callback = freespace_overwrite
@@ -1251,14 +1291,11 @@ class Main:
 						
 						if self.interactive[f"freespace_overwrite | pass{current_pass}_complete"] == True:
 							end_time = time.perf_counter()
-							sys.stdout.write(f"\b{' ' for i in range(100)}")
+							
+							sys.stdout.write(f"\r")
+							sys.stdout.write(f"{' ' for i in range(100)}")
 							
 							sys.stdout.write(f"\rwaiting for pass {current_pass} to finish. . . done [finished in {(end_time - start_time):.2f} seconds]\n\n")
-							
-							current_pass += 1
-							
-							if current_pass == 3:
-								break
 							
 							start_time = time.perf_counter()
 							continue
@@ -1406,14 +1443,13 @@ class Main:
 		
 		# Guard clauses
 		if self.args.interactive:
-			while not cleanup_status:
-				try:
-					pycrypter_interactive()
-				except Exception as err:
-					err_name = type(err).__name__
+			try:
+				pycrypter_interactive()
+			except Exception as err:
+				err_name = type(err).__name__
 					
-					print(f"An unexpected error occured! Details: \n")
-					traceback.print_exc()
+				print(f"An unexpected error occured! Details: \n")
+				traceback.print_exc()
 			
 			return
 		
@@ -1612,6 +1648,8 @@ if __name__ == "__main__":
 	
 	def script_cleanup(signal=0, frame=None):
 		main.cleanup = True
+		DataOverwriter.stop()
+		
 		cleanup_handler(signal=signal, frame=None, exit_reason="KeyboardInterrupt")
 	
 	if platform.system() == "Windows":
