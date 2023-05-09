@@ -1,5 +1,5 @@
 # pycrypter version
-pycrypter_version = "1.2"
+pycrypter_version = "1.2" # this is a const, do not modify it below this line
 
 # Required Modules
 import platform
@@ -15,7 +15,7 @@ import signal
 import ctypes
 
 import random
-import string
+from dotenv import load_dotenv
 
 # Threading Modules
 import threading
@@ -331,6 +331,41 @@ def iterate_dir(directory, iterate_tree=True, skip_dirs=None):
 # |==================================================| Cipher functions |==================================================|
 
 class CipherManager:
+	def hash(self, input_string, hash_method=hashes.SHA256()):
+		if not isinstance(input_string, bytes):
+			bytes_passed = input_string.encode('utf-8')
+		else:
+			bytes_passed = input_string
+		
+		digest = hashes.Hash(hash_method)
+
+		digest.update(bytes_passed)
+		hashed_bytes = digest.finalize()
+
+		hashed_string = hashed_bytes.hex()
+		return hashed_string
+	
+	def generate_peppers(self, env_path="pepper.env"):
+		if os.path.isdir(env_path):
+			raise IsADirectoryError(f"[Errno 21] Is a directory: {env_path}")
+		
+		if os.path.isfile(env_path):
+			confirm = input(f"Warning: {env_path} already exists, overwrite? [Y/N]: ")
+			
+			if confirm.lower() == "y":
+				pass
+			else:
+				return
+			
+		with open(env_path, "w") as file:
+			hash_pepper = os.urandom(32)
+			password_pepper = os.urandom(32)
+			
+			file.write(f"hash_pepper={str(hash_pepper)}\n")
+			file.write(f"password_pepper={str(password_pepper)}")
+			
+			print(f"Wrote peppers to {env_path}, please make sure to keep the peppers in a safe area.")
+
 	# encryption function
 	def encrypt_file(self, input_file, password="", keep_copy=False, hash_pepper=b"", password_pepper=b""):
 		"""
@@ -928,21 +963,13 @@ class Main:
 			raise RuntimeError("class Main must be called as __main__")
 
 		# pepper | DO NOT LEAK THIS!
-		self.hash_pepper = b'' # Put your own pepper
-		self.password_pepper = b'' # Put your own pepper
+		load_dotenv("pepper.env")
 		
-		self.main_dict = {
-			"bar_iteration": 0,
-			"bar_total": 0,
-			
-			"files_count": 0,
-			"files_finished": 0,
-		}
+		self.hash_pepper = os.getenv("hash_pepper")
+		self.password_pepper = os.getenv("password_pepper")
 		
 		# cleanup variables
 		self.cleanup = False
-		self.set_progress_bar = True
-
 		self.interactive = {'init': False}
 
 		# misc
@@ -1457,12 +1484,10 @@ class Main:
 			self.thread_mgr.semaphore = self.args.threads
 		
 		if self.args.encrypt and self.args.decrypt:
-			raise ValueError("expected 1 required argument [-e/--encrypt] or [-d/--decrypt], got 2")
+			raise argparse.ArgumentError(None, "expected 1 required argument, got two [-e/--encrypt and -d/--decrypt]")
 
 		if not self.args.encrypt and not self.args.decrypt:
-			raise ValueError("expected 1 required argument [-e/--encrypt] or [-d/--decrypt]")
-		
-		# atexit.register(debug_info)
+			raise argparse.ArgumentError(None, "missing required argument: -e/--encrypt or -d/--decrypt")
 		
 		if self.args.ransomware:
 			cipher_method = "encrypt" if self.args.encrypt else "decrypt"
@@ -1478,7 +1503,7 @@ class Main:
 			sys.exit()
 
 		if self.args.file is None and self.args.directory is None:
-			raise ValueError("expected valid file/directory paths, got None")
+			raise argparse.ArgumentError(None, "missing required argument(s): -f/--file or -dr/--directory")
 		
 		password = getpass.getpass("Enter a password: ")
 		
@@ -1514,7 +1539,8 @@ class Main:
 			skip_files = set()
 		
 		files = set()
-
+		
+		
 		for file in file_list:
 			if os.path.isfile(file):
 				files.add(file)
@@ -1573,16 +1599,24 @@ class Main:
 
 			print(f"\n{Fore.YELLOW}|-------------------------------------------------------------|{Style.RESET_ALL}")
 
-	def cipher_directory(self, directories, skip_directories=[], verbose=True, password="", keep_copy=False, cipher_method="encrypt"):
+	def cipher_directory(self, directories, skip_directories=None, verbose=True, password="", keep_copy=False, cipher_method="encrypt"):
 		if cipher_method not in ["encrypt", "decrypt"]:
-			raise ValueError(f'cipher_method expected "encrypt" or "decrypt", got {cipher_method}')
+			raise ValueError(f'cipher_method expected "encrypt" or "decrypt", got {type(cipher_method).__name__}')
 		
-		files = []
-		files_errorlist = []
-
+		if skip_directories == None:
+			skip_directories = set()
+		
+		files = set()
+		folders = set()
+		
+		files_count = 0
+		files_finished = 0
+		
+		files_exception_thrown = 0
+		
 		for folder in directories:
 			if os.path.isdir(folder):
-				folders.append(folder)
+				folders.add(folder)
 				continue
 			
 			if len(directories) > 1:
@@ -1599,7 +1633,13 @@ class Main:
 		for i, folder in enumerate(folders):
 			returned_files = iterate_dir(folder, iterate_tree=True, skip_dirs=skip_directories)
 			
-			files.add(*returned_files)
+			for file in returned_files:
+				files.add(file)
+				
+				if file in files:
+					files_count += 1
+		
+		files_exception_thrown = files_count
 		
 		for i, file in enumerate(files):
 			if self.cleanup:
@@ -1610,6 +1650,8 @@ class Main:
 					self.encrypt_file(*args, **kwargs)
 				else:
 					self.decrypt_file(*args, **kwargs)
+					
+				files_exception_thrown -= 1
 				
 			thread = self.thread_create(
 				callback = call_cipher,
@@ -1626,7 +1668,7 @@ class Main:
 
 		if verbose:
 			print(f"\n|-------------------------------------------------------------|\n\nTotal files : {files_count}")
-			print(f"Total files [processed] : {files_finished}\n")
+			print(f"Total files [processed] : {files_finished}")
 
 			print(f"Total: {files_count} | Completed: {files_finished} | Error thrown: {files_exception_thrown}\n")
 
