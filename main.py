@@ -969,8 +969,8 @@ class Main:
 		
 		self.cipher_mgr = CipherManager()
 		
-		self.encrypt_file = cipher_mgr.encrypt_file
-		self.decrypt_file = cipher_mgr.decrypt_file
+		self.encrypt_file = self.cipher_mgr.encrypt_file
+		self.decrypt_file = self.cipher_mgr.decrypt_file
 		
 		# self.parser objects
 		self.args = None
