@@ -1,5 +1,5 @@
 # pycrypter version
-pycrypter_version = "1.2" # this is a const, do not modify it below this line
+pycrypter_version = "1.3" # this is a const, do not modify it below this line
 
 # Required Modules
 import platform
@@ -14,7 +14,8 @@ import getpass
 import signal
 import ctypes
 
-import random
+import logging
+import secrets
 from dotenv import load_dotenv
 
 # Threading Modules
@@ -55,32 +56,6 @@ from cryptography.hazmat.primitives import hashes
 
 from cryptography.fernet import Fernet
 
-# kernel32 signal handler function | cleanup function
-def cleanup_handler(signal=0, frame=None, silent=False, exit_reason=""):
-	"""
-	Create a cleanup handler to handle KeyboardInterrupt or start cleanup
-	
-	Parameters:
-		signal (int): exit signal (optional, defaults to 0)
-			The exit code used to exit the script.
-		
-		frame (frame object): not used (optional, defaults to None)
-			Reserved for signal.signal() for Unix systems.
-		
-		silent (bool): prevent printing exit reason and code (optional, defaults to False)
-			Defines whether to print {signal} and {exit_reason}
-		
-		exit_reason (str): exit reason (optional, defaults to "" [Empty string])
-			Defines the exit reason.
-			
-	Returns:
-		int: 0
-	"""
-
-	if not silent:
-		print(f"\ncleanup_handler raised, signal: {signal} | reason: {exit_reason}")
-	return 0
-
 # terminal progress bar
 def progress_bar(iteration, total, prefix='', suffix='', decimals=1, length=50, fill='='):
 	"""
@@ -118,6 +93,12 @@ def progress_bar(iteration, total, prefix='', suffix='', decimals=1, length=50, 
 			Progress: |=====---------------------------------------------| 10.0% Complete
 	"""
 	
+	if not isinstance(iteration, int):
+		raise TypeError(f"total expected an integer, got {type(iteration).__name__}")
+	
+	if not isinstance(total, int):
+		raise TypeError(f"total expected an integer, got {type(total).__name__}")
+	
 	percent = ("{0:." + str(decimals) + "f}").format(100 * (iteration / float(total)))
 	filled_length = int(length * iteration // total)
 	bar = fill * filled_length + '-' * (length - filled_length)
@@ -129,15 +110,31 @@ def progress_bar(iteration, total, prefix='', suffix='', decimals=1, length=50, 
 
 class ThreadManager:
 	def __init__(self):
+		self.error_list = []
+		
 		self.threads_set = set()
 		self.semaphore = threading.Semaphore(5)
 		
 	# thread worker
-	def worker(self, callback_function, semaphore=None, threads_set=None, *args, **kwargs):
-
-		if not threads_set:
-			threads_set = self.threads_set
+	def worker(
+			self, callback_function,
+			semaphore=None, threads_set=None,
+			error_list=None,
+			*args, **kwargs
+		):
 		
+		# Guard clauses
+		if threads_set == None:
+			threads_set = self.threads_set
+		elif not isinstance(threads_set, set):
+			raise TypeError(f"threads_set expected set, got {type(error_list)}")
+		
+		if error_list == None:
+			error_list = self.error_list
+		elif not isinstance(error_list, list):
+			raise TypeError(f"error_list expected list, got {type(error_list)}")
+		
+		# Semaphore guard clause
 		if not hasattr(semaphore, 'acquire'):
 			if semaphore == None:
 				semaphore = self.semaphore
@@ -156,19 +153,44 @@ class ThreadManager:
 				try:
 					callback_function(*args, **kwargs)
 				except Exception as err:
-					print("\nexception caught while calling: \n")
-					traceback.print_exc()
+					if error_list is not None:
+						# tb means traceback
+						tb_dict = {}
+						tb_msg = traceback.format_exc()
+						
+						tb_dict["name"] = type(err).__name__
+						tb_dict["caller"] = func_name
+						
+						tb_dict["traceback"] = tb_msg
+						
+						error_list.append(tb_dict)
+					else:
+						tb_msg = traceback.format_exc()
+						print(tb_msg)
 				finally:
-					threads_set.remove(current_thread)
+					threads_set.remove(current_thread) if current_thread in threads_set else None
 		except Exception as err:
 			print(f"\nexception caught at worker: \n")
 			traceback.print_exc()
 
 	# create a thread
-	def thread_create(self, callback, semaphore=None, threads_set=None, thread_name="", *args, **kwargs):
-
-		if not threads_set:
+	def thread_create(
+			self, callback,
+			semaphore=None, threads_set=None,
+			thread_name="", error_list=None,
+			*args, **kwargs
+		):
+		
+		# Guard clauses
+		if threads_set == None:
 			threads_set = self.threads_set
+		elif not isinstance(threads_set, set):
+			raise TypeError(f"threads_set expected set, got {type(error_list)}")
+		
+		if error_list == None:
+			error_list = self.error_list
+		elif not isinstance(error_list, list):
+			raise TypeError(f"error_list expected list, got {type(error_list)}")
 		
 		if not hasattr(semaphore, 'acquire'):
 			if semaphore == None:
@@ -177,11 +199,11 @@ class ThreadManager:
 				raise TypeError(f"expected a semaphore/lock, got {type(semaphore)}")
 		
 		if not isinstance(threads_set, (list, set, tuple)):
-			raise TypeError(f"threads expected a list/set/tuple, got {type(threads_set)}")
+			raise TypeError(f"threads_set expected a list/set/tuple, got {type(threads_set)}")
 		
 		thread = threading.Thread(
 			target = self.worker,
-			args = (callback, semaphore, threads_set, *args),
+			args = (callback, semaphore, threads_set, error_list, *args),
 			kwargs = kwargs,
 			name = thread_name
 		)
@@ -317,16 +339,16 @@ def iterate_dir(directory, iterate_tree=True, skip_dirs=None):
 			
 			if path in skip_dirs:
 				continue
-
+			
 			if os.path.isfile(path):
 				file_paths.add(path)
 
 			elif os.path.isdir(path) and iterate_tree:
 				file_paths.update(iterate_dir(path))
 	except PermissionError as err:
-		print(f"Caught PermissionError: {err}")
-
-	return file_paths
+		raise err
+	finally:
+		return file_paths
 
 # |==================================================| Cipher functions |==================================================|
 
@@ -358,8 +380,8 @@ class CipherManager:
 				return
 			
 		with open(env_path, "w") as file:
-			hash_pepper = os.urandom(32)
-			password_pepper = os.urandom(32)
+			hash_pepper = secrets.token_bytes(32)
+			password_pepper = secrets.token_bytes(32)
 			
 			file.write(f"hash_pepper={str(hash_pepper)}\n")
 			file.write(f"password_pepper={str(password_pepper)}")
@@ -494,12 +516,15 @@ class CipherManager:
 		
 		# Encrypt the file in chunks
 		with open(input_file, "rb+") as file:
+			hash_pepper = hash_pepper.encode()
+			password_pepper = password_pepper.encode()
+			
 			file_size = os.path.getsize(input_file)
 			
 			if file_size > (2 * 1024 * 1024 * 1024):
 				print(f"{Fore.YELLOW}Warning: encrypt_file has detected that {input_file} is larger than 2GB, do not kill the python process.")
 			
-			salt = os.urandom(32)
+			salt = secrets.token_bytes(32)
 
 			kdf = PBKDF2HMAC(
 				algorithm=hashes.SHA256(),
@@ -674,6 +699,9 @@ class CipherManager:
 
 		# Decrypt the file in chunks
 		with open(input_file, "rb+") as file:
+			hash_pepper = hash_pepper.encode()
+			password_pepper = password_pepper.encode()
+			
 			file_size = os.path.getsize(input_file)
 			
 			if file_size > (2 * 1024 * 1024 * 1024):
@@ -733,7 +761,7 @@ class CipherManager:
 		
 	# encryption function
 	def encrypt_data(self, data, password="", hash_pepper=b"", password_pepper=b""):
-		salt = os.urandom(32)
+		salt = secrets.token_bytes(32)
 
 		kdf = PBKDF2HMAC(
 			algorithm=hashes.SHA256(),
@@ -857,8 +885,8 @@ class DataOverwriter:
 					
 					os.fsync(file.fileno())
 					file.truncate(0)
-		except PermissionError:
-			print(f"PermissionError caught, cannot open {file_path}")
+		except PermissionError as error:
+			raise error
 		finally:
 			os.remove(file_path)
 
@@ -918,44 +946,7 @@ class DataOverwriter:
 		except PermissionError as error:
 			raise error
 		finally:
-			os.remove(file_name) if os.path.isfile(file_name) else None
-
-# Final debugging information, executed after everything
-def debug_info(interactive_call=False):
-	global bar_iteration
-	
-	if bar_iteration == 0:
-		return "not_in_progress"
-
-	# Worker errors
-	print(f"\n{Fore.YELLOW}|-------------------------------------------------------------|{Style.RESET_ALL}")
-	print(f"{Fore.LIGHTGREEN_EX}Worker errors:{Style.RESET_ALL}\n")
-
-	for err in worker_errors:
-		print(f"\n{Fore.LIGHTRED_EX}{err}{Style.RESET_ALL}")
-		print(Fore.CYAN + "|-------------------------------------------------------------|" + Style.RESET_ALL)
-
-	# Permission errors
-	print(f"\n{Fore.YELLOW}|-------------------------------------------------------------|{Style.RESET_ALL}")
-	print(f"{Fore.LIGHTGREEN_EX}Permission errors:{Style.RESET_ALL}\n")
-
-	for err in permission_errors:
-		print(f"\n{Fore.LIGHTRED_EX}{err}{Style.RESET_ALL}")
-		print(Fore.CYAN + "|-------------------------------------------------------------|" + Style.RESET_ALL)
-
-	# File and directory errors
-	print(f"\n{Fore.YELLOW}|-------------------------------------------------------------|{Style.RESET_ALL}")
-	print(f"{Fore.LIGHTGREEN_EX}File and directory errors:{Style.RESET_ALL}\n")
-
-	for err in file_errors:
-		print(f"\n{Fore.LIGHTRED_EX}{err}{Style.RESET_ALL}")
-		print(Fore.CYAN + "|-------------------------------------------------------------|" + Style.RESET_ALL)
-
-	for err in dir_errors:
-		print(f"\n{Fore.LIGHTRED_EX}{err}{Style.RESET_ALL}")
-		print(Fore.CYAN + "|-------------------------------------------------------------|" + Style.RESET_ALL)
-
-	print(f"\n{Fore.YELLOW}|-------------------------------------------------------------|{Style.RESET_ALL}")
+			os.remove(file_name) if os.path.isfile(file_name) else None 
 
 class Main:
 	def __init__(self):
@@ -974,10 +965,12 @@ class Main:
 
 		# misc
 		self.thread_mgr = ThreadManager()
-		self.thread_create = ThreadManager().thread_create
+		self.thread_create = self.thread_mgr.thread_create
 		
-		self.encrypt_file = CipherManager().encrypt_file
-		self.decrypt_file = CipherManager().decrypt_file
+		self.cipher_mgr = CipherManager()
+		
+		self.encrypt_file = cipher_mgr.encrypt_file
+		self.decrypt_file = cipher_mgr.decrypt_file
 		
 		# self.parser objects
 		self.args = None
@@ -1095,11 +1088,9 @@ class Main:
 			try:
 				command = input("pycrypter> ")
 			except EOFError:
-				cleanup_handler(signal=0, silent=True, exit_reason="EOFCharacterExit")
 				break
 			
 			if command == "exit":
-				cleanup_handler(signal=0, silent=True, exit_reason="SystemExit")
 				break
 			
 			if "encrypt " in command.lower():
@@ -1138,7 +1129,7 @@ class Main:
 						cipher_method="encrypt"
 					)
 					
-					debug_info()
+					
 					continue
 					
 				if "-f " in encryption_arguments or "--file " in encryption_arguments:
@@ -1180,7 +1171,7 @@ class Main:
 							keep_copy=keep_copy,
 							cipher_method="encrypt"
 						)
-				debug_info()
+				
 			
 			if "decrypt " in command.lower():
 				decryption_arguments = command.replace("decrypt ", "").lower()
@@ -1218,7 +1209,7 @@ class Main:
 						cipher_method="decrypt"
 					)
 					
-					debug_info()
+					
 					continue
 					
 				if "-f " in decryption_arguments or "--file " in decryption_arguments:
@@ -1259,7 +1250,7 @@ class Main:
 							keep_copy=keep_copy,
 							cipher_method="decrypt"
 						)
-				debug_info()
+				
 				
 			if "safedel " in command.lower():
 				safedel_arguments = command.replace("safedel ", "").lower()
@@ -1539,11 +1530,12 @@ class Main:
 			skip_files = set()
 		
 		files = set()
-		
+		files_dict = {'count': 0, 'finished': 0, 'exception_thrown': 0}
 		
 		for file in file_list:
 			if os.path.isfile(file):
 				files.add(file)
+				files_dict['count'] += 1
 				continue
 
 			if len(files) > 1:
@@ -1557,15 +1549,47 @@ class Main:
 				else:
 					raise FileNotFoundError(f"[Errno 2] No such file: {file}")
 		
-		for i, file in enumerate(files):
+		files_dict['exception_thrown'] = files_dict['count']
+		
+		for current_iteration, file in enumerate(files):
 			if self.cleanup:
 				break
 			
 			def call_cipher(*args, **kwargs):
+				if current_iteration + 1 == files_dict['count']:
+					progress_bar(
+						files_dict['count'], 
+						files_dict['count'], 
+						
+						prefix='Progress: ', 
+						suffix='Complete', 
+						
+						decimals=1, 
+						length=50,
+						
+						fill='='
+					)
+				else:
+					progress_bar(
+						current_iteration, 
+						files_dict['count'], 
+						
+						prefix='Progress: ', 
+						suffix='Complete', 
+						
+						decimals=1, 
+						length=50,
+						
+						fill='='
+					)
+				
 				if cipher_method == "encrypt":
 					self.encrypt_file(*args, **kwargs)
 				else:
 					self.decrypt_file(*args, **kwargs)
+				
+				files_dict['exception_thrown'] -= 1
+				files_dict['finished'] += 1
 				
 			thread = self.thread_create(
 				callback = call_cipher,
@@ -1581,27 +1605,26 @@ class Main:
 		thread.join()
 		
 		if verbose:
-			print(f"\n|-------------------------------------------------------------|\n\nTotal files : {files_count}")
-			print(f"Total files [processed] : {files_finished}\n")
+			print(f"\n|-------------------------------------------------------------|\n\nTotal files : {files_dict['count']}")
+			print(f"Total files [processed] : {files_dict['finished']}")
 
-			print(f"Total: {files_count} | Completed: {files_finished} | Error thrown: {files_exception_thrown}\n")
+			print(f"Total: {files_dict['count']} | Completed: {files_dict['finished']} | Error thrown: {files_dict['exception_thrown']}\n")
 
-			print(f"Extra information: \nfiles_count: {files_count} | len(files): {len(files)}")
-			print(f"files_finished: {files_finished} | files_finished == files_count: {files_finished == files_count}\n")
-
-			# File and directory errors
-			print(f"\n{Fore.YELLOW}|-------------------------------------------------------------|{Style.RESET_ALL}")
-			print(f"{Fore.LIGHTGREEN_EX}File errorlist: (-dr){Style.RESET_ALL}\n")
-
-			for err in files_errorlist:
-				print(f"\n{Fore.LIGHTRED_EX}{err}{Style.RESET_ALL}")
-				print(Fore.CYAN + "|-------------------------------------------------------------|" + Style.RESET_ALL)
-
-			print(f"\n{Fore.YELLOW}|-------------------------------------------------------------|{Style.RESET_ALL}")
+			print(f"Extra information: \nfiles_count: {files_dict['count']} | len(files): {len(files)}")
+			print(f"files_finished: {files_dict['finished']}\n")
+			
+			print(f"ThreadManager errorlist: \n")
+			err_list = list(self.thread_mgr.error_list)
+			
+			for dictionary in err_list:
+				print(f"Error name: {dictionary['name']}")
+				
+				print(f"Caller function: {dictionary['caller']}\n")
+				print(f"Error traceback: \n{dictionary['traceback']}")
 
 	def cipher_directory(self, directories, skip_directories=None, verbose=True, password="", keep_copy=False, cipher_method="encrypt"):
 		if cipher_method not in ["encrypt", "decrypt"]:
-			raise ValueError(f'cipher_method expected "encrypt" or "decrypt", got {type(cipher_method).__name__}')
+			raise TypeError(f'cipher_method expected "encrypt" or "decrypt", got {type(cipher_method).__name__}')
 		
 		if skip_directories == None:
 			skip_directories = set()
@@ -1609,10 +1632,7 @@ class Main:
 		files = set()
 		folders = set()
 		
-		files_count = 0
-		files_finished = 0
-		
-		files_exception_thrown = 0
+		files_dict = {'count': 0, 'finished': 0, 'exception_thrown': 0}
 		
 		for folder in directories:
 			if os.path.isdir(folder):
@@ -1637,21 +1657,49 @@ class Main:
 				files.add(file)
 				
 				if file in files:
-					files_count += 1
+					files_dict['count'] += 1
 		
-		files_exception_thrown = files_count
+		files_dict['exception_thrown'] = files_dict['count']
 		
-		for i, file in enumerate(files):
+		for current_iteration, file in enumerate(files):
 			if self.cleanup:
 				break
 			
 			def call_cipher(*args, **kwargs):
+				if current_iteration + 1 == files_dict['count']:
+					progress_bar(
+						files_dict['count'], 
+						files_dict['count'], 
+						
+						prefix='Progress: ', 
+						suffix='Complete', 
+						
+						decimals=1, 
+						length=50,
+						
+						fill='='
+					)
+				else:
+					progress_bar(
+						current_iteration, 
+						files_dict['count'], 
+						
+						prefix='Progress: ', 
+						suffix='Complete', 
+						
+						decimals=1, 
+						length=50,
+						
+						fill='='
+					)
+				
 				if cipher_method == "encrypt":
 					self.encrypt_file(*args, **kwargs)
 				else:
 					self.decrypt_file(*args, **kwargs)
-					
-				files_exception_thrown -= 1
+				
+				files_dict['exception_thrown'] -= 1
+				files_dict['finished'] += 1
 				
 			thread = self.thread_create(
 				callback = call_cipher,
@@ -1665,34 +1713,30 @@ class Main:
 			)
 		
 		thread.join()
-
-		if verbose:
-			print(f"\n|-------------------------------------------------------------|\n\nTotal files : {files_count}")
-			print(f"Total files [processed] : {files_finished}")
-
-			print(f"Total: {files_count} | Completed: {files_finished} | Error thrown: {files_exception_thrown}\n")
-
-			print(f"Extra information: \nfiles_count: {files_count} | len(files): {len(files)}")
-			print(f"files_finished: {files_finished} | files_finished == files_count: {files_finished == files_count}\n")
-
-			# File and directory errors
-			print(f"\n{Fore.YELLOW}|-------------------------------------------------------------|{Style.RESET_ALL}")
-			print(f"{Fore.LIGHTGREEN_EX}File errorlist: (-dr){Style.RESET_ALL}\n")
-
-			for err in files_errorlist:
-				print(f"\n{Fore.LIGHTRED_EX}{err}{Style.RESET_ALL}")
-				print(Fore.CYAN + "|-------------------------------------------------------------|" + Style.RESET_ALL)
-
-			print(f"\n{Fore.YELLOW}|-------------------------------------------------------------|{Style.RESET_ALL}")
 		
+		if verbose:
+			print(f"\n|-------------------------------------------------------------|\n\nTotal files : {files_dict['count']}")
+			print(f"Total files [processed] : {files_dict['finished']}")
+
+			print(f"Total: {files_dict['count']} | Completed: {files_dict['finished']} | Error thrown: {files_dict['exception_thrown']}\n")
+
+			print(f"Extra information: \nfiles_count: {files_dict['count']} | len(files): {len(files)}")
+			print(f"files_finished: {files_dict['finished']}\n")
+			
+			print(f"ThreadManager errorlist: \n")
+			err_list = list(self.thread_mgr.error_list)
+			
+			for dictionary in err_list:
+				print(f"Error name: {dictionary['name']}")
+				
+				print(f"Caller function: {dictionary['caller']}\n")
+				print(f"Error traceback: \n{dictionary['traceback']}")
+			
 if __name__ == "__main__":
 	main = Main()
 	
 	def script_cleanup(signal=0, frame=None):
 		main.cleanup = True
-		DataOverwriter.stop()
-		
-		cleanup_handler(signal=signal, frame=None, exit_reason="KeyboardInterrupt")
 	
 	if platform.system() == "Windows":
 		# kernel32 signal handler
