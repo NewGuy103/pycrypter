@@ -1,5 +1,5 @@
 # pycrypter version
-pycrypter_version = "1.3" # this is a const, do not modify it below this line
+PYCRYPTER_VERSION = "1.4" # this is a const, do not modify it below this line
 
 # Required Modules
 import platform
@@ -114,7 +114,15 @@ class ThreadManager:
 		
 		self.threads_set = set()
 		self.semaphore = threading.Semaphore(5)
+	
+	def set_thread_count(self, num):
+		if not isinstance(num, int):
+			raise TypeError(f"num expected int, got {type(num).__name__}")
 		
+		if num < 1:
+			num = 1
+		self.semaphore = threading.Semaphore(num)
+	
 	# thread worker
 	def worker(
 			self, callback_function,
@@ -353,7 +361,7 @@ def iterate_dir(directory, iterate_tree=True, skip_dirs=None):
 # |==================================================| Cipher functions |==================================================|
 
 class CipherManager:
-	def hash(self, input_string, hash_method=hashes.SHA256()):
+	def hash_string(self, input_string, hash_method=hashes.SHA256()):
 		if not isinstance(input_string, bytes):
 			bytes_passed = input_string.encode('utf-8')
 		else:
@@ -366,6 +374,28 @@ class CipherManager:
 
 		hashed_string = hashed_bytes.hex()
 		return hashed_string
+	
+	def hash_key(self, input_key, salt=b"", hash_pepper=b"", password_pepper=b"", hash_method=hashes.SHA256()):
+		kdf = PBKDF2HMAC(
+			algorithm=hashes.SHA256(),
+			length=32,
+			salt=salt+hash_pepper,
+			iterations=100000
+		)
+			
+		key = None
+			
+		if isinstance(input_key, bytes):
+			key = kdf.derive(input_key + password_pepper)
+		else:
+			key = kdf.derive(input_key.encode() + password_pepper)
+		
+		return key
+	
+	def compare_hash(self, hash_1, hash_2):
+		compare_output = secrets.compare_digest(hash_1, hash_2)
+		
+		return compare_output
 	
 	def generate_peppers(self, env_path="pepper.env"):
 		if os.path.isdir(env_path):
@@ -389,117 +419,41 @@ class CipherManager:
 			print(f"Wrote peppers to {env_path}, please make sure to keep the peppers in a safe area.")
 
 	# encryption function
-	def encrypt_file(self, input_file, password="", keep_copy=False, hash_pepper=b"", password_pepper=b""):
-		"""
-		Define a function to encrypt a file in chunks
-		using the cryptography.Fernet module.
-		
-		Parameters:
-			input_file (str): the input file (required)
-				The file passed to encrypt.
+	def encrypt_file(
+			self, input_file,
+			kdf_key=b"", password="",
 			
-			password (str): password to use (optional, defaults to ""/empty string)
-				The password used to encrypt the file.
+			keep_copy=False, hash_pepper=b"",
+			password_pepper=b""
+		):
+		def cipher_init(input_file, salt=b"", key=b"", keep_copy=False, is_precomputed=False):
+			if len(key) < 32:
+				raise ValueError("Key length is invalid for fernet.")
+			
+			with open(input_file, "rb+") as file:
+				if is_precomputed:
+					salt=b""
 				
-			keep_copy (bool): keep a copy of the decrypted file (optional, defaults to False)
-				Defines whether the script should keep a copy of the decrypted file.
-			
-			override_raise (bool): override function raise statements (optional, defaults to False)
-				This will override the function's raise statements, disabling them.
-		Returns:
-			int: 0 [Success]
-			
-			str:
-				[Cleanup] "CleanupInterrupt"
-				- This tells the script to stop executing
+				fernet_key = base64.urlsafe_b64encode(key)
 				
-				[Error 1] "input_file == " + sys.argv[0] + " | Illegal operation"
-				- This error tells the user that the input file is the current script file.
+				file.seek(0, os.SEEK_SET)
+				chunk = file.read(50 * 1024 * 1024)
 				
-				[Error 2] "File doesn't exist/isn't a file | file_error"
-				- This error tells the user that the file passed
-				- isn't a file or the file doesn't exist.
+				file.seek(0, os.SEEK_SET)
+				file.write(salt)
 				
-		Exceptions:
-			[Note: override_raise will disable these exceptions]
-			
-			[Exception 1] raise ValueError("keep_copy must be a valid boolean")
-			- This exception tells the user that the keep_copy argument
-			- must be a valid boolean. [True, False, 1, 0]
-			
-			[Exception 2] raise MemoryError(
-				f"The file \"{input_file}\" exceeds the maximum memory allowed to allocate. (Max: {max_mem} MB)")
-			
-			- This exception tells the user that the file passed is too large to process.
-			- [The file must be below memory_max_allocated, check the variables above]
-			
-		Example usage:
-			Passing the script file will return Error 1
-			
-			return_value = encrypt_file("pycrypter.py", password="MyPass", keep_copy=False)
-			print(return_value)
-			
-			[Output]
-			input_file == pycrypter.py | Illegal operation
-			
-			=================================================================
-			Passing a non-boolean to keep_copy will throw a ValueError [Exception 1]
-			
-			return_value = encrypt_file("pycrypter.py", password="MyPass", keep_copy="No")
-			print(return_value)
-			
-			[Output]
-			Traceback (most recent call last):
-			  File "C:\\MyPython\\pycrypter.py", line 1, in <module>
-				raise ValueError("keep_copy must be a valid boolean")
-			ValueError: keep_copy must be a valid boolean
-			
-			=================================================================
-			Passing a directory/non-existent file will return Error 2
-			
-			return_value_1 = encrypt_file("not_a_file", password="MyPass", keep_copy=False)
-			return_value_2 = encrypt_file("someFakeFile.txt", password="MyPass", keep_copy=False)
-			
-			print(return_value_1)
-			print(return_value_2)
-			
-			[Output]
-			File doesn't exist/isn't a file | file_error
-			File doesn't exist/isn't a file | file_error
-			
-			=================================================================
-			Passing a file that exceeds memory_max_allocated will throw a MemoryError [Exception 2]
-			
-			return_value = encrypt_file("MyLargeFile.txt", password="MyPass", keep_copy=False)
-			print(return_value)
-			
-			[Output]
-			Traceback (most recent call last):
-			  File "C:\MyPython\pycrypter.py", line 1, in <module>
-				raise MemoryError(f"The file \"{input_file}\" exceeds the maximum memory allowed to allocate. (Max: {max_mem} MB)")
-				
-			MemoryError: The file "MyLargeFile.txt" exceeds the maximum memory allowed to allocate. (Max: 300.00 MB)
-			
-			------------------------------------------------------------------
-			
-			Basic usage:
-				# We can assume that text.txt's contents is this:
-				# This is my text in this .txt file
-				
-				return_value = encrypt_file("test.txt", password="MyPass", keep_copy=False)
-				print(return_value) # This would print the integer "0"
-				
-				with open("test.txt", "r") as file:
-					print(file.read())
+				if keep_copy:
+					file_name, file_ext = os.path.splitext(input_file)
+					shutil.copy2(input_file, f"{file_name}_decrypted-copy{file_ext}")
+
+				while chunk:
+					chunk_encrypted = Fernet(fernet_key).encrypt(chunk)
+					file.write(chunk_encrypted)
 					
-				[Output]
-				0
-				Áî¼Ç6Ò–—0¡sIZéã†¸ëïÖa↕Ò¯;¶ª“QgAAAAABkRw0N50WP2VQ
-				-q6i2jeCkVRExdZSvzChp1CFx_wKiPAvv7J6OJr4QFZIguTjp2P_ylVz31Z_kBye_TxjbV_5SAi3b4gSRpJMYkMXqSRFLslJyn1D6s_Hkc8EkgedWHOIqBEXc
+					chunk = file.read(50 * 1024 * 1024)  # Read 50MB at a time
 				
-				# The ciphertext above was separated into two lines to fit it in this docstring
-		"""
-	
+				return 0
+			
 		# Guard clauses
 		if input_file == sys.argv[0]:
 			raise ValueError(f"illegal operation [input_file == {sys.argv[0]}]")
@@ -515,173 +469,98 @@ class CipherManager:
 				raise FileNotFoundError(f"[Errno 2] No such file: {input_file}")
 		
 		# Encrypt the file in chunks
-		with open(input_file, "rb+") as file:
+		file_size = os.path.getsize(input_file)
+			
+		if file_size > (2 * 1024 * 1024 * 1024):
+			print(f"{Fore.YELLOW}Warning: encrypt_file has detected that {input_file} is larger than 2GB, do not kill the python process.")
+		
+		# If a precomputed key is passed, use it
+		if kdf_key:
+			if len(kdf_key) < 32:
+				raise ValueError("Key length is invalid for fernet.")
+				
+			cipher_init(input_file, key=kdf_key, keep_copy=keep_copy, is_precomputed=True)
+			return 0
+			
+		# Encode the hash and password pepper if not a byte string
+		if not isinstance(hash_pepper, bytes):
 			hash_pepper = hash_pepper.encode()
+			
+		if not isinstance(password_pepper, bytes):
 			password_pepper = password_pepper.encode()
 			
-			file_size = os.path.getsize(input_file)
+		salt = secrets.token_bytes(32)
+		
+		# Construct the PBKDF2HMAC object
+		kdf = PBKDF2HMAC(
+			algorithm=hashes.SHA256(),
+			length=32,
+			salt=salt+hash_pepper,
+			iterations=100000
+		)
 			
-			if file_size > (2 * 1024 * 1024 * 1024):
-				print(f"{Fore.YELLOW}Warning: encrypt_file has detected that {input_file} is larger than 2GB, do not kill the python process.")
+		key = None
 			
-			salt = secrets.token_bytes(32)
-
-			kdf = PBKDF2HMAC(
-				algorithm=hashes.SHA256(),
-				length=32,
-				salt=salt+hash_pepper,
-				iterations=100000
-			)
-			
-			key = None
-			
-			if isinstance(password, bytes):
-				key = kdf.derive(password + password_pepper)
-			else:
-				key = kdf.derive(password.encode() + password_pepper)
-			
-			fernet_key = base64.urlsafe_b64encode(key)
-			
-			file.seek(0, os.SEEK_SET)
-			chunk = file.read(50 * 1024 * 1024)
-			
-			file.seek(0, os.SEEK_SET)
-			file.write(salt)
-			
-			if keep_copy:
-				file_name, file_ext = os.path.splitext(input_file)
-				shutil.copy2(input_file, f"{file_name}_decrypted-copy{file_ext}")
-
-			while chunk:
-				chunk_encrypted = Fernet(fernet_key).encrypt(chunk)
-				file.write(chunk_encrypted)
-				
-				chunk = file.read(50 * 1024 * 1024)  # Read 50MB at a time
+		if isinstance(password, bytes):
+			key = kdf.derive(password + password_pepper)
+		else:
+			key = kdf.derive(password.encode() + password_pepper)
+		
+		cipher_init(input_file, key=key, keep_copy=keep_copy, salt=salt)
 		return 0
 
 	# decryption function
-	def decrypt_file(self, input_file, password="", keep_copy=False, hash_pepper=b"", password_pepper=b""):
-		"""
-		Define a function to decrypt a file in chunks
-		using the cryptography.Fernet module.
-		
-		Parameters:
-			input_file (str): the input file (required)
-				The file passed to decrypt.
+	def decrypt_file(
+			self, input_file,
+			kdf_key=b"", password="",
 			
-			password (str): password to use (optional, defaults to ""/empty string)
-				The password used to decrypt the file.
+			keep_copy=False, hash_pepper=b"",
+			password_pepper=b""
+		):
+		def decipher_init(input_file, key=b"", keep_copy=False, is_precomputed=False):
+			if len(key) < 32:
+				raise ValueError("Key length is invalid for fernet.")
+			
+			with open(input_file, "rb+") as file:
+				fernet_key = base64.urlsafe_b64encode(key)
 				
-			keep_copy (bool): keep a copy of the decrypted file (optional, defaults to False)
-				Defines whether the script should keep a copy of the encrypted file.
+				# If a precomputed key was used, no salt should be available
+				if not is_precomputed:
+					file.seek(32, os.SEEK_SET)
 				
-		Returns:
-			int: 0 [Success]
-			
-			str:
-				[Cleanup] "CleanupInterrupt"
-				- This tells the script to stop executing
+				chunk = file.read(50 * 1024 * 1024)
+				decrypt_successful = False
 				
-				[Error 1] "input_file == " + sys.argv[0] + " | Illegal operation"
-				- This error tells the user that the input file is the current script file.
+				try:
+					chunk_encrypted = Fernet(fernet_key).decrypt(chunk)
+					decrypt_successful = True
+				except cryptography.fernet.InvalidToken as error:
+					raise error
+				finally:
+					file.close() if not decrypt_successful else None
 				
-				[Error 2] "File doesn't exist/isn't a file | file_error"
-				- This error tells the user that the file passed
-				- isn't a file or the file doesn't exist.
+				# Erase/keep the file
+				if keep_copy:
+					file_name, file_ext = os.path.splitext(input_file)
+					shutil.copy2(input_file, f"{file_name}_encrypted-copy{file_ext}")
 				
-		Exceptions:
-			[Exception 1] raise ValueError("keep_copy must be a valid boolean")
-			- This exception tells the user that the keep_copy argument
-			- must be a valid boolean. [True, False, 1, 0]
-			
-			[Exception 2] raise MemoryError(
-				f"The file \"{input_file}\" exceeds the maximum memory allowed to allocate. (Max: {max_mem} MB)")
-			
-			- This exception tells the user that the file passed is too large to process.
-			- [The file must be below 300MB]
-			
-			[Exception 3] raise DecryptionError(f"The key \"{password}\" is invalid.")
-			- This exception indicates that the password passed is invalid.
-			- Note: This exception is a custom defined exception
-			
-		Example usage:
-			Passing the script file will return Error 1
-			
-			return_value = decrypt_file("pycrypter.py", password="MyPass", keep_copy=False)
-			print(return_value)
-			
-			[Output]
-			input_file == pycrypter.py | Illegal operation
-			
-			=================================================================
-			Passing a non-boolean to keep_copy will throw a ValueError [Exception 1]
-			
-			return_value = decrypt_file("pycrypter.py", password="MyPass", keep_copy="No")
-			print(return_value)
-			
-			[Output]
-			Traceback (most recent call last):
-			  File "C:\\MyPython\\pycrypter.py", line 1, in <module>
-				raise ValueError("keep_copy must be a valid boolean")
-			ValueError: keep_copy must be a valid boolean
-			
-			=================================================================
-			Passing a directory/non-existent file will return Error 2
-			
-			return_value_1 = decrypt_file("not_a_file", password="MyPass", keep_copy=False)
-			return_value_2 = decrypt_file("someFakeFile.txt", password="MyPass", keep_copy=False)
-			
-			print(return_value_1)
-			print(return_value_2)
-			
-			[Output]
-			File doesn't exist/isn't a file | file_error
-			File doesn't exist/isn't a file | file_error
-			
-			=================================================================
-			Passing a file that exceeds memory_max_allocated will throw a MemoryError [Exception 2]
-			
-			return_value = decrypt_file("MyLargeFile.txt", password="MyPass", keep_copy=False)
-			print(return_value)
-			
-			[Output]
-			Traceback (most recent call last):
-			  File "C:\MyPython\pycrypter.py", line 1, in <module>
-				raise MemoryError(f"The file \"{input_file}\" exceeds the maximum memory allowed to allocate. (Max: {max_mem} MB)")
+				cursor_position = None
+				plaintext_end = 0
 				
-			MemoryError: The file "MyLargeFile.txt" exceeds the maximum memory allowed to allocate. (Max: 300.00 MB)
-			
-			=================================================================
-			Passing the wrong password will throw a custom defined DecryptionError [Exception 3]
-			
-			return_value = decrypt_file("text.txt", password="WrongPassword", keep_copy=False)
-			print(return_value)
-			
-			[Output]
-			Traceback (most recent call last):
-			  File "C:\MyPython\pycrypter.py", line 1, in <module>
-				raise DecryptionError(f"The key \"{password}\" is invalid.")
-			
-			DecryptionError: The key "WrongPassword" is invalid.
-			------------------------------------------------------------------
-			
-			Basic usage:
-				# We can assume that text.txt's contents is this ciphertext:
-				# [Had to split it into two lines for this documentation]
-				
-				# Áî¼Ç6Ò–—0¡sIZéã†¸ëïÖa↕Ò¯;¶ª“QgAAAAABkRw0N50WP2VQ
-				# -q6i2jeCkVRExdZSvzChp1CFx_wKiPAvv7J6OJr4QFZIguTjp2P_ylVz31Z_kBye_TxjbV_5SAi3b4gSRpJMYkMXqSRFLslJyn1D6s_Hkc8EkgedWHOIqBEXc
-				
-				return_value = decrypt_file("test.txt", password="MyPass", keep_copy=False)
-				print(return_value) # This would print the integer "0"
-				
-				with open("test.txt", "r") as file:
-					print(file.read())
+				while chunk:
+					chunk_decrypted = Fernet(fernet_key).decrypt(chunk)
+					plaintext_end += len(chunk_decrypted)
 					
-				[Output]
-				0
-				This is my text in this .txt file
-		"""
+					cursor_position = file.tell()
+					
+					file.seek(0, os.SEEK_SET)
+					file.write(chunk_decrypted)
+					
+					file.seek(cursor_position, os.SEEK_SET)
+					chunk = file.read(50 * 1024 * 1024)
+				
+				file.truncate(plaintext_end)
+				return 0
 
 		# Guard clauses
 		if input_file == sys.argv[0]:
@@ -698,69 +577,88 @@ class CipherManager:
 				raise FileNotFoundError(f"[Errno 2] No such file: {input_file}")
 
 		# Decrypt the file in chunks
-		with open(input_file, "rb+") as file:
-			hash_pepper = hash_pepper.encode()
-			password_pepper = password_pepper.encode()
+		file_size = os.path.getsize(input_file)
 			
-			file_size = os.path.getsize(input_file)
-			
-			if file_size > (2 * 1024 * 1024 * 1024):
+		if file_size > (2 * 1024 * 1024 * 1024):
 				print(f"{Fore.YELLOW}Warning: decrypt_file has detected that {input_file} is larger than 2GB, do not kill the python process.")
 			
-			salt = file.read(32)
+		if kdf_key:
+			if len(kdf_key) < 32:
+				raise ValueError("Key length is invalid for fernet.")
 				
-			kdf = PBKDF2HMAC(
-				algorithm=hashes.SHA256(),
-				length=32,
-				salt=salt+hash_pepper,
-				iterations=100000
-			)
+			decipher_init(input_file, key=kdf_key, keep_copy=keep_copy, is_precomputed=True)
+			return 0
 			
-			if isinstance(password, bytes):
-				key = kdf.derive(password + password_pepper)
-			else:
-				key = kdf.derive(password.encode() + password_pepper)
+		# Encode the hash and password pepper if not a byte string
+		if not isinstance(hash_pepper, bytes):
+			hash_pepper = hash_pepper.encode()
 			
-			fernet_key = base64.urlsafe_b64encode(key)
-			
-			file.seek(32, os.SEEK_SET)
-			chunk = file.read(50 * 1024 * 1024)
-			
-			decrypt_successful = False
+		if not isinstance(password_pepper, bytes):
+			password_pepper = password_pepper.encode()
+		
+		salt = None
+		
+		with open(input_file, "rb+") as file:
+			salt = file.read(32)
+		
+		kdf = PBKDF2HMAC(
+			algorithm=hashes.SHA256(),
+			length=32,
+			salt=salt+hash_pepper,
+			iterations=100000
+		)
+		
+		key = None
+		
+		if isinstance(password, bytes):
+			key = kdf.derive(password + password_pepper)
+		else:
+			key = kdf.derive(password.encode() + password_pepper)
+		
+		decipher_init(input_file, key=key, keep_copy=keep_copy, is_precomputed=False)
+		return 0
+	
+	# encryption function
+	def encrypt_data(self, data, kdf_key=b"", password="", hash_pepper=b"", password_pepper=b""):
+		def encryption_init(_data, _salt=b"", _kdf_key=b"", precomputed_key=b""):
+			"""
+				Note: Arguments with "_" as a prefix means that the argument is protected
+			"""
+			encrypted_data = b""
 			
 			try:
-				chunk_encrypted = Fernet(fernet_key).decrypt(chunk)
-				decrypt_successful = True
-			except cryptography.fernet.InvalidToken as error:
+				if not isinstance(_data, bytes):
+					_data = _data.encode()
+				
+				if precomputed_key:
+					if len(precomputed_key) < 32:
+						raise ValueError("KDF Key length is invalid for fernet.")
+					
+					fernet_key = base64.urlsafe_b64encode(precomputed_key)
+					encrypted_data = Fernet(fernet_key).encrypt(_data)
+				else:
+					fernet_key = base64.urlsafe_b64encode(_kdf_key)
+					encrypted_data = _salt + Fernet(fernet_key).encrypt(_data)
+			except Exception as error:
 				raise error
 			finally:
-				file.close() if not decrypt_successful else None
-			
-			# Erase/keep the file
-			if keep_copy:
-				file_name, file_ext = os.path.splitext(input_file)
-				shutil.copy2(input_file, f"{file_name}_decrypted-copy{file_ext}")
-			
-			cursor_position = None
-			plaintext_end = 0
-			
-			while chunk:
-				chunk_decrypted = Fernet(fernet_key).decrypt(chunk)
-				plaintext_end += len(chunk_decrypted)
+				if precomputed_key:
+					precomputed_key_hextoken = secrets.token_hex(32)
+					precomputed_key = secrets.token_hex(32)
 				
-				cursor_position = file.tell()
+				_data = secrets.token_hex(32)
+				fernet_key = secrets.token_hex(32)
 				
-				file.seek(0, os.SEEK_SET)
-				file.write(chunk_decrypted)
+				_kdf_key = secrets.token_hex(32)
 				
-				file.seek(cursor_position, os.SEEK_SET)
-				chunk = file.read(50 * 1024 * 1024)
+			return encrypted_data
 			
-			file.truncate(plaintext_end)
-		return 0
+		if kdf_key:
+			if len(kdf_key) < 32:
+				raise ValueError("KDF Key length is invalid for fernet.")
+			
+			return encryption_init(_data=data, _kdf_key=kdf_key)
 		
-	# encryption function
-	def encrypt_data(self, data, password="", hash_pepper=b"", password_pepper=b""):
 		salt = secrets.token_bytes(32)
 
 		kdf = PBKDF2HMAC(
@@ -777,18 +675,40 @@ class CipherManager:
 		else:
 			key = kdf.derive(password.encode() + password_pepper)
 		
-		fernet_key = base64.urlsafe_b64encode(key)
-		
-		if not isinstance(data, bytes):
-			data = data.encode()
-		
-		encrypted_data = salt + Fernet(fernet_key).encrypt(data) 
-		data = None
-		
-		return encrypted_data
+		return encryption_init(_data=data, _salt=salt, _kdf_key=key)
 
 	# decryption function
-	def decrypt_data(self, data, password="", hash_pepper=b"", password_pepper=b""):
+	def decrypt_data(self, data, kdf_key=b"", password="", hash_pepper=b"", password_pepper=b""):
+		def decryption_init(_data, _kdf_key=b"", precomputed_key=b""):
+			decrypted_data = b""
+			
+			try:
+				if precomputed_key:
+					fernet_key = base64.urlsafe_b64encode(precomputed_key)
+					decrypted_data = Fernet(fernet_key).decrypt(_data)
+				else:
+					fernet_key = base64.urlsafe_b64encode(_kdf_key)
+					decrypted_data = Fernet(fernet_key).decrypt(_data[32:])
+				
+			except cryptography.fernet.InvalidToken as error:
+				raise error
+			finally:
+				if precomputed_key:
+					precomputed_key_hextoken = secrets.token_hex(32)
+					precomputed_key = secrets.token_hex(32)
+				
+				for _ in range(35):
+					_data = secrets.token_hex(32)
+					fernet_key = secrets.token_hex(32)
+			
+			return decrypted_data
+			
+		if kdf_key:
+			if len(kdf_key) < 32:
+				raise ValueError("KDF Key length is invalid for fernet.")
+			
+			return decryption_init(data, precomputed_key=kdf_key)
+		
 		salt = data[:32]
 				
 		kdf = PBKDF2HMAC(
@@ -797,24 +717,13 @@ class CipherManager:
 			salt=salt+hash_pepper,
 			iterations=100000
 		)
-			
+		
 		if isinstance(password, bytes):
 			key = kdf.derive(password + password_pepper)
 		else:
 			key = kdf.derive(password.encode() + password_pepper)
-			
-		fernet_key = base64.urlsafe_b64encode(key)
 		
-		decrypted_data = b""
-		
-		try:
-			decrypted_data = Fernet(fernet_key).decrypt(data[32:])
-		except cryptography.fernet.InvalidToken as error:
-			raise error
-		finally:
-			data = None
-		
-		return decrypted_data
+		return decryption_init(data, key)
 
 # Overwrite deletion
 class DataOverwriter:
@@ -824,26 +733,28 @@ class DataOverwriter:
 	def stop(self):
 		self.cleanup = True
 	
-	def file_overwrite(self, file_path, file_size=0, chunk_size=100 * 1024 * 1024):
+	def file_overwrite(
+			self, file_path,
+			file_size=0, chunk_size=100 * 1024 * 1024
+		):
 		try:
 			if not isinstance(chunk_size, (int, float)):
 				raise TypeError(f"chunk_size expected int/float, got {type(chunk_size).__name__}")
 			
 			file_path = os.path.abspath(file_path)
 			
-			if file_size < 1:
+			if not isinstance(file_size, int) or file_size < 1:
 				file_size = os.path.getsize(file_path)
 			
-			memory = psutil.virtual_memory()
-			
-			memory_available = float(format(memory.available / (1024 * 1024 * 1024)))
-			memory_total = float(format(memory.total / (1024 * 1024 * 1024)))
-			
-			if chunk_size > memory_total:
-				raise MemoryError(f"chunk size ({chunk_size:.2f} GB) exceeds total memory available ({memory_total:.2f} GB)")
-			elif chunk_size > memory_available:
-				raise MemoryError(f"chunk size ({chunk_size:.2f} GB) exceeds available memory ({memory_available:.2f} GB)")
-			
+			switch = {
+				'0x00': bytearray([0x00]),
+				'0xFF': bytearray([0x00]),
+				
+				'0xAA': bytearray([0xAA]),
+				'0x55': bytearray([0x55]),
+				
+				'random': bytearray([0x00])
+			}
 			with open(file_path, 'wb') as file:
 				original_size = file_size
 				
@@ -854,21 +765,6 @@ class DataOverwriter:
 				for pass_iteration in range(16):
 					file_size = original_size
 					chunk_data = None
-					
-					if pass_iteration in [0, 1]:
-						chunk_data = bytearray([0x00, 0x00]) # First pass
-										
-					elif pass_iteration in [2, 3]:
-						chunk_data = bytearray([0xFF, 0xFF]) # Second pass
-										
-					elif pass_iteration in [4, 5]:
-						chunk_data = bytearray([0x55, 0xAA]) # Third pass
-											
-					elif pass_iteration in [6, 7]:
-						chunk_data = bytearray([0xAA, 0x55]) # Fourth pass
-										
-					else:
-						chunk_data = os.urandom(2) # All other passes
 					
 					while file_size > 0:
 						if self.cleanup:
@@ -975,7 +871,7 @@ class Main:
 		# self.parser objects
 		self.args = None
 		
-		self.parser = argparse.ArgumentParser(description=f'Pycrypter CLI by NewGuy103. v{pycrypter_version}')
+		self.parser = argparse.ArgumentParser(description=f'Pycrypter CLI by NewGuy103. v{PYCRYPTER_VERSION}')
 
 		self.parser.add_argument(
 			'-i', '--interactive',
@@ -1043,7 +939,7 @@ class Main:
 			help='Directory path(s) to specify.'
 		)
 	
-	def pycrypter_interactive():
+	def pycrypter_interactive(self):
 		"""
 		
 		"""
@@ -1107,29 +1003,16 @@ class Main:
 					args1 = encryption_arguments.replace("-rw", "")
 					encryption_arguments = args1.replace("--ransomware", "")
 					
-					dir_list = [
-						f"C:\\MyPython\\hmm"
-					]
+					cipher_method = "encrypt"
+					current_user = os.getlogin()
 					
-					skip_dirs = [
-						f"C:\\Users\\{current_user}\\AppData"
-					]
-					
-					password = getpass.getpass("Enter a password: ")
-					
-					sys.stdout.write("|-------------------------------------------------------------|\n")
-					sys.stdout.flush()
-					
-					self.ransomware(
-						dir_list,
-						skip_directories=skip_dirs,
-						verbose=True,
-						password=password,
-						keep_copy=keep_copy,
-						cipher_method="encrypt"
+					self.cipher_directory(
+						f"C:\\Users\\{current_user}",
+						verbose = self.args.verbose,
+						password = password,
+						keep_copy = self.args.keep_copy,
+						cipher_method = cipher_method
 					)
-					
-					
 					continue
 					
 				if "-f " in encryption_arguments or "--file " in encryption_arguments:
@@ -1187,29 +1070,16 @@ class Main:
 					args1 = decryption_arguments.replace("-rw", "")
 					decryption_arguments = args1.replace("--ransomware", "")
 					
-					dir_list = [
-						f"C:\\MyPython\\hmm"
-					]
+					cipher_method = "decrypt"
+					current_user = os.getlogin()
 					
-					skip_dirs = [
-						f"C:\\Users\\{current_user}\\AppData"
-					]
-					
-					password = getpass.getpass("Enter a password: ")
-					
-					sys.stdout.write("|-------------------------------------------------------------|\n")
-					sys.stdout.flush()
-					
-					self.ransomware(
-						dir_list,
-						skip_directories=skip_dirs,
-						verbose=True,
-						password=password,
-						keep_copy=keep_copy,
-						cipher_method="decrypt"
+					self.cipher_directory(
+						f"C:\\Users\\{current_user}",
+						verbose = self.args.verbose,
+						password = password,
+						keep_copy = self.args.keep_copy,
+						cipher_method = cipher_method
 					)
-					
-					
 					continue
 					
 				if "-f " in decryption_arguments or "--file " in decryption_arguments:
@@ -1453,8 +1323,6 @@ class Main:
 					
 					total_end_time = time.time()
 					print(f"total time elapsed for {files[current_file]}: {(total_end_time - total_start_time):.2f} seconds\n")
-					print(worker_errors)
-			...
 
 	def parse_args(self):
 		self.args = self.parser.parse_args()
@@ -1462,7 +1330,7 @@ class Main:
 		# Guard clauses
 		if self.args.interactive:
 			try:
-				pycrypter_interactive()
+				self.pycrypter_interactive()
 			except Exception as err:
 				err_name = type(err).__name__
 					
