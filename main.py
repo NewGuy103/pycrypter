@@ -361,7 +361,39 @@ def iterate_dir(directory, iterate_tree=True, skip_dirs=None):
 # |==================================================| Cipher functions |==================================================|
 
 class CipherManager:
-	def hash_string(self, input_string, hash_method=hashes.SHA256()):
+	def __init__(self):
+		self.hash_method = hashes.SHA256()
+		
+	def hash_string(self, input_string, hash_method=None):
+		"""
+			Hash a string with the provided hash method.
+				
+			Parameters:
+				self [class parameter]
+				input_string: [required, can be str or bytes]
+				
+				hash_method: [hashes.SHA256()]
+				
+			How to use:
+				[hashes is cryptography.hazmat.primitves.hashes]
+				
+				Call hash_string like so:
+				[example output]
+				
+				>>> hash_string("example")
+				50d858e0985ecc7f60418aaf0cc5ab587f42c2570a884095a9e8ccacd0f6545c
+				
+				Optionally, your can provide a hash object:
+				[example output]
+				
+				>>> hash_string("example", hash_method=hashes.SHA512())
+				3bb12eda3c298db5de25597f54d924f2e17e78a26ad8953ed8218ee682f0bbbe9021e2f3 \
+				009d152c911bf1f25ec683a902714166767afbd8e5bd0fb0124ecb8a
+		"""
+		
+		if hash_method is None:
+			hash_method = self.hash_method
+		
 		if not isinstance(input_string, bytes):
 			bytes_passed = input_string.encode('utf-8')
 		else:
@@ -375,9 +407,102 @@ class CipherManager:
 		hashed_string = hashed_bytes.hex()
 		return hashed_string
 	
-	def hash_key(self, input_key, salt=b"", hash_pepper=b"", password_pepper=b"", hash_method=hashes.SHA256()):
+	def hash_key(
+			self, input_key,
+			salt=b"", hash_pepper=b"",
+			
+			password_pepper=b"", hash_method=None
+		):
+		"""
+			Create a kdf-derived key using PBKDF2HMAC.
+			
+			Quick help:
+				[hashes is cryptography.hazmat.primitves.hashes]
+				
+				A salt is a random value that makes the output more random,
+				
+				A pepper is a random secret value that only the program should know
+				and must not be stored with the password.
+				
+				- hash_pepper is used during creating the PBKDF2HMAC object
+				- password_pepper is used during key derivation
+				
+				You can pass a hash object to make the hash longer.
+				- defaults to hashes.SHA256()
+				
+			Parameters:
+				self: [class parameter]
+				
+				input_key: [required, can be str or bytes]
+				salt: [defaults to b""]
+				
+				hash_pepper: [defaults to b""]
+				password_pepper: [defaults to b""]
+				
+				hash_method: [defaults to hashes.SHA256()]
+				
+			How to use:
+				[Warning: Please do not use the byte strings below.]
+				
+				Call hash_key like so:
+					>>> hash_key("example")
+					b'\xd4\x1f\t\x1e\xcd\xfb\xb9{\xc6\x08Mn\xfe\x05\xe0\xdd\x9f \
+					\x11\xf8\xc3"\x17]\xee\x13\xff:\xa0n\x04\xb0j'
+				
+				-- The output above is an example of a key derived from PBKDF2HMAC.
+				-- Of course, it's best to add a salt for more uniqueness.
+				
+				Add a salt like so:
+					>>> salt = secrets.token_bytes(32)
+					>>> salt
+					b'=D\xf8A\xfb\xef\xe6\xb1V&]\x8a\x88\xbf\xf3\xc9\xd2\xb2 \
+					\x16Zw~g\x83t\xbax\xb5\xa9\xbb\x9dB'
+					
+					>>> hash_key("example", salt=salt)
+					b's@\xbe\xb7r\xe9\x1c\x0e\xd1\xbf\xb5\xecp\xb1\x03\x85 \
+					\xc7D0\xb3\x18\xd4[\xaa\xcd\xfb\x92\xcf\xf1\x8a\x81V'
+				
+				-- By adding a salt, you add more randomness, and prevent
+				-- rainbow table attacks.
+				
+				Add peppers like so:
+					>>> salt = secrets.token_bytes(32)
+					>>> salt
+					b'n_eK*?v\x1c\xe8e\xfa0\xf1/|\xf2\x0c\x06\xd2 \
+					\xf6\x18\xbf\x9a%"\x9a\x98\xcb\x8e3r\t'
+					
+					>>> hash_pepper = secrets.token_bytes(32)
+					>>> hash_pepper
+					b'\x0e\xae\xcdO@a\x98|\xe1\xd2=\xa0\xc9\xd24\x88 \ 
+					\xc3\x03\x97vK\xc6C\xf1\xee\xa5Cs\xef}\x14W'
+					
+					>>> password_pepper = secrets.token_bytes(32)
+					>>> password_pepper
+					b'!\x05R`\x1b\xf6\xd8gIO\x8d\xd0\xda9/\x90U \
+					\x11\r\xcf\x982S\xe4\xae\x82m8_,\xcc\xed'
+					
+					>>> hash_key("example", salt=salt, hash_pepper=hash_pepper, password_pepper=password_pepper)
+					b"\x1d\t\xda>Ah\xb7'`hk\x12\xed\x0f\x0e6\xc8\x07\xe6\xd47\xef \xbf\x7f\xe5\xfb\x92\xbdBA["
+					
+				-- A breakdown of what the code is doing:
+					Firstly, it generates 3 secret values, a salt, a hash pepper and a password pepper.
+					Next, it passes the string "example" and the 3 values to hash_key.
+					
+					hash_key parses the arguments, and creates the PBKDF2HMAC object with:
+					- salt
+					- hash_pepper
+					- hash algorithm [default one]
+					
+					Then, it derives the key using the KDF object, while also
+					adding the password pepper, to ensure that even if the password
+					is correct, it will still fail to match due to the pepper.
+		"""
+		
+		if hash_method is None:
+			hash_method = self.hash_method
+		
 		kdf = PBKDF2HMAC(
-			algorithm=hashes.SHA256(),
+			algorithm=hash_method,
 			length=32,
 			salt=salt+hash_pepper,
 			iterations=100000
@@ -393,15 +518,86 @@ class CipherManager:
 		return key
 	
 	def compare_hash(self, hash_1, hash_2):
+		"""
+			Compare a hash using secrets.compare_digest.
+			
+			Quick help:
+				Comparing hashes using "==" is a bad idea,
+				Using a digest comparison function is better.
+				
+				This simply compares the hash digest
+				[The hex, which looks like 223d3c2cdafefk . . .]
+			
+			Parameters:
+				self [class parameter]
+				
+				hash_1 [first hash]
+				hash_2 [second hash]
+				
+			How to use:
+				Pass two hashes as parameters.
+					>>> hash_1 = "d04b98f48e8f8bcc15c6ae5ac050801cd6dcfd428fb5f9e65c4e16e7807340fa"
+					>>> hash_2 = "d04b98f48e8f8bcc15c6ae5ac050801cd6dcfd428fb5f9e65c4e16e7807340fa"
+					-- Both hashes are the same, also the input string was "hash"
+					
+					>>> compare_hash(hash_1, hash_2)
+					True
+				
+				This is useful for checking if the hash matches an input:
+					>>> expected_hash = "d04b98f48e8f8bcc15c6ae5ac050801cd6dcfd428fb5f9e65c4e16e7807340fa"
+					>>> input_hash = hash_string(input("Enter the string: "))
+					falsehash
+					
+					-- The value of falsehash is: "45b7033e65585da8eda3fe91064a091b7321643078c569ef3d694a0c29f864fb"
+					>>> compare_hash(expected_hash, input_hash)
+					False
+		"""
 		compare_output = secrets.compare_digest(hash_1, hash_2)
-		
 		return compare_output
 	
-	def generate_peppers(self, env_path="pepper.env"):
+	def generate_peppers(self, env_path="pepper.env", skip_prompt=False):
+		"""
+			Generate peppers to use for PBKDF2HMAC.
+			
+			Quick help:
+				This function is a simple and easy way to generate peppers,
+				but make sure to keep the peppers hidden and safe.
+				
+				You can optionally provide a name, or let it default to pepper.env
+			
+			Parameters:
+				self [class parameter]
+				env_path [defaults to pepper.env]
+				
+				skip_prompt [defaults to False]
+			
+			How to use:
+				Call the function.
+					>>> generate_peppers()
+					Wrote peppers to pepper.env, please make sure to keep the peppers in a safe area.
+					
+				-- You can check pepper.env, then use load_dotenv("pepper.env") and os.getenv()
+				
+				Call the function with an optional name:
+					>>> generate_peppers("some_peppers.env")
+					Wrote peppers to pepper.env, please make sure to keep the peppers in a safe area.
+				
+				-- Same thing above, but now it's named "some_peppers.env"
+				
+				If the pepper already exists:
+					>>> generate_peppers()
+					Warning: pepper.env already exists, overwrite? [Y/N]: 
+					-- You can choose to overwrite it, or return.
+					
+				Optionally, skip the prompt:
+					>>> generate_peppers(skip_prompt=True)
+					Wrote peppers to pepper.env, please make sure to keep the peppers in a safe area.
+		"""
+		
 		if os.path.isdir(env_path):
 			raise IsADirectoryError(f"[Errno 21] Is a directory: {env_path}")
 		
-		if os.path.isfile(env_path):
+		if os.path.isfile(env_path) and not skip_prompt:
 			confirm = input(f"Warning: {env_path} already exists, overwrite? [Y/N]: ")
 			
 			if confirm.lower() == "y":
@@ -456,7 +652,7 @@ class CipherManager:
 			
 		# Guard clauses
 		if input_file == sys.argv[0]:
-			raise ValueError(f"illegal operation [input_file == {sys.argv[0]}]")
+			raise ValueError(f"cannot cipher source file [{sys.argv[0]}]")
 
 		if keep_copy not in [True, False]:
 			raise TypeError(f'keep_copy expected boolean, got {keep_copy}')
@@ -472,7 +668,7 @@ class CipherManager:
 		file_size = os.path.getsize(input_file)
 			
 		if file_size > (2 * 1024 * 1024 * 1024):
-			print(f"{Fore.YELLOW}Warning: encrypt_file has detected that {input_file} is larger than 2GB, do not kill the python process.")
+			print(f"{Fore.YELLOW}Warning: encrypt_file has detected that '{input_file}' is larger than 2GB, do not kill the python process.")
 		
 		# If a precomputed key is passed, use it
 		if kdf_key:
@@ -493,7 +689,7 @@ class CipherManager:
 		
 		# Construct the PBKDF2HMAC object
 		kdf = PBKDF2HMAC(
-			algorithm=hashes.SHA256(),
+			algorithm=self.hash_method,
 			length=32,
 			salt=salt+hash_pepper,
 			iterations=100000
@@ -564,7 +760,7 @@ class CipherManager:
 
 		# Guard clauses
 		if input_file == sys.argv[0]:
-			raise ValueError(f"illegal operation [input_file == {sys.argv[0]}]")
+			raise ValueError(f"cannot cipher source file [{sys.argv[0]}]")
 
 		if keep_copy not in [True, False]:
 			raise TypeError(f'expected boolean, got {keep_copy}')
@@ -602,7 +798,7 @@ class CipherManager:
 			salt = file.read(32)
 		
 		kdf = PBKDF2HMAC(
-			algorithm=hashes.SHA256(),
+			algorithm=self.hash_method,
 			length=32,
 			salt=salt+hash_pepper,
 			iterations=100000
@@ -620,49 +816,45 @@ class CipherManager:
 	
 	# encryption function
 	def encrypt_data(self, data, kdf_key=b"", password="", hash_pepper=b"", password_pepper=b""):
-		def encryption_init(_data, _salt=b"", _kdf_key=b"", precomputed_key=b""):
-			"""
-				Note: Arguments with "_" as a prefix means that the argument is protected
-			"""
+		def cipher_init(data, salt=b"", key=b"", is_precomputed=False):
+			if len(key) < 32:
+				raise ValueError("Key length is invalid for fernet.")
+			
 			encrypted_data = b""
 			
+			if is_precomputed:
+				salt = b""
+			
 			try:
-				if not isinstance(_data, bytes):
-					_data = _data.encode()
+				if not isinstance(data, bytes):
+					data = data.encode()
 				
-				if precomputed_key:
-					if len(precomputed_key) < 32:
-						raise ValueError("KDF Key length is invalid for fernet.")
-					
-					fernet_key = base64.urlsafe_b64encode(precomputed_key)
-					encrypted_data = Fernet(fernet_key).encrypt(_data)
-				else:
-					fernet_key = base64.urlsafe_b64encode(_kdf_key)
-					encrypted_data = _salt + Fernet(fernet_key).encrypt(_data)
+				if len(key) < 32:
+					raise ValueError("Key length is invalid for fernet.")
+				
+				fernet_key = base64.urlsafe_b64encode(key)
+				encrypted_data = salt + Fernet(fernet_key).encrypt(data)
 			except Exception as error:
 				raise error
 			finally:
-				if precomputed_key:
-					precomputed_key_hextoken = secrets.token_hex(32)
-					precomputed_key = secrets.token_hex(32)
-				
-				_data = secrets.token_hex(32)
-				fernet_key = secrets.token_hex(32)
-				
-				_kdf_key = secrets.token_hex(32)
+				for _ in range(35):
+					data = secrets.token_hex(32)
+					fernet_key = secrets.token_hex(32)
+					
+					key = secrets.token_hex(32)
 				
 			return encrypted_data
 			
 		if kdf_key:
 			if len(kdf_key) < 32:
-				raise ValueError("KDF Key length is invalid for fernet.")
+				raise ValueError("Key length is invalid for fernet.")
 			
-			return encryption_init(_data=data, _kdf_key=kdf_key)
+			return cipher_init(data=data, key=kdf_key, is_precomputed=True)
 		
 		salt = secrets.token_bytes(32)
 
 		kdf = PBKDF2HMAC(
-			algorithm=hashes.SHA256(),
+			algorithm=self.hash_method,
 			length=32,
 			salt=salt+hash_pepper,
 			iterations=100000
@@ -675,55 +867,56 @@ class CipherManager:
 		else:
 			key = kdf.derive(password.encode() + password_pepper)
 		
-		return encryption_init(_data=data, _salt=salt, _kdf_key=key)
+		return cipher_init(data=data, key=key, salt=salt, is_precomputed=False)
 
 	# decryption function
 	def decrypt_data(self, data, kdf_key=b"", password="", hash_pepper=b"", password_pepper=b""):
-		def decryption_init(_data, _kdf_key=b"", precomputed_key=b""):
+		def decipher_init(data, key=b"", is_precomputed=False):
+			if len(key) < 32:
+				raise ValueError("Key length is invalid for fernet.")
+			
 			decrypted_data = b""
 			
+			if not is_precomputed:
+				data = data[32:]
+			
 			try:
-				if precomputed_key:
-					fernet_key = base64.urlsafe_b64encode(precomputed_key)
-					decrypted_data = Fernet(fernet_key).decrypt(_data)
-				else:
-					fernet_key = base64.urlsafe_b64encode(_kdf_key)
-					decrypted_data = Fernet(fernet_key).decrypt(_data[32:])
-				
+				fernet_key = base64.urlsafe_b64encode(key)
+				decrypted_data = Fernet(fernet_key).decrypt(data)
 			except cryptography.fernet.InvalidToken as error:
 				raise error
 			finally:
-				if precomputed_key:
-					precomputed_key_hextoken = secrets.token_hex(32)
-					precomputed_key = secrets.token_hex(32)
+				key = secrets.token_hex(32)
 				
 				for _ in range(35):
-					_data = secrets.token_hex(32)
+					data = secrets.token_hex(32)
 					fernet_key = secrets.token_hex(32)
 			
 			return decrypted_data
 			
 		if kdf_key:
 			if len(kdf_key) < 32:
-				raise ValueError("KDF Key length is invalid for fernet.")
+				raise ValueError("Key length is invalid for fernet.")
 			
-			return decryption_init(data, precomputed_key=kdf_key)
+			return decipher_init(data=data, key=kdf_key, is_precomputed=True)
 		
 		salt = data[:32]
 				
 		kdf = PBKDF2HMAC(
-			algorithm=hashes.SHA256(),
+			algorithm=self.hash_method,
 			length=32,
 			salt=salt+hash_pepper,
 			iterations=100000
 		)
+		
+		key = None
 		
 		if isinstance(password, bytes):
 			key = kdf.derive(password + password_pepper)
 		else:
 			key = kdf.derive(password.encode() + password_pepper)
 		
-		return decryption_init(data, key)
+		return decipher_init(data=data, key=key, is_precomputed=False)
 
 # Overwrite deletion
 class DataOverwriter:
@@ -747,14 +940,12 @@ class DataOverwriter:
 				file_size = os.path.getsize(file_path)
 			
 			switch = {
-				'0x00': bytearray([0x00]),
-				'0xFF': bytearray([0x00]),
+				0: bytearray([0x00, 0xAA]),
+				1: bytearray([0xFF, 0x55]),
 				
-				'0xAA': bytearray([0xAA]),
-				'0x55': bytearray([0x55]),
-				
-				'random': bytearray([0x00])
+				2: os.urandom(2)
 			}
+			
 			with open(file_path, 'wb') as file:
 				original_size = file_size
 				
@@ -762,9 +953,9 @@ class DataOverwriter:
 				chunk = chunk_size
 				file.truncate(0)		
 				
-				for pass_iteration in range(16):
+				for i, pass_iteration in enumerate(range(3)):
+					chunk_data = switch[i]
 					file_size = original_size
-					chunk_data = None
 					
 					while file_size > 0:
 						if self.cleanup:
@@ -776,7 +967,7 @@ class DataOverwriter:
 						
 						chunk = min(file_size, chunk_size)
 						
-						file.write(chunk_data * chunk)
+						file.write(chunk_data * chunk / 2)
 						file_size -= chunk
 					
 					os.fsync(file.fileno())
@@ -786,45 +977,46 @@ class DataOverwriter:
 		finally:
 			os.remove(file_path)
 
-	def freespace_overwrite(self, disk_drive, chunk_size=500 * 1024 * 1024):
-		file_name = "disk_filler_file.tmp"
+	def freespace_overwrite(self, disk_drive, file_name="", chunk_size=500 * 1024 * 1024):
+		for char in disk_drive:
+			pattern = "\\/"
+			
+			if char in pattern:
+				disk_drive = disk_drive.replace(char, "")
+			
+		if not file_name:
+			file_name = disk_drive + "\\disk_filler_file.tmp"
+		else:
+			file_name = disk_drive + "\\" + file_name
 		
 		try:
 			if not isinstance(chunk_size, (int, float)):
 				raise TypeError(f"chunk_size expected int/float, got {type(chunk_size).__name__}")
 			
 			memory = psutil.virtual_memory()
-			
 			memory_available = memory.available
-			memory_total = memory.total
 			
-			if chunk_size > memory_total:
-				raise MemoryError(f"chunk size ({chunk_size:.2f} GB) exceeds total memory available ({memory_total:.2f} GB)")
-			elif chunk_size > memory_available:
-				raise MemoryError(f"chunk size ({chunk_size:.2f} GB) exceeds available memory ({memory_available:.2f} GB)")
+			if chunk_size > memory_available:
+				raise MemoryError("cannot allocate enough memory for chunk_size [not enough available memory]")
 			
 			with open(file_name, 'wb') as file:
 				usage = psutil.disk_usage(disk_drive)
 				usage_free = usage.free
 				
-				# Allow 1 GB to be allocated to prevent out of disk issues
+				# Allow 1 GB to be allocated to prevent out of storage issues
 				original_free_space = int(format(usage_free // (1024 * 1024 * 1024))) - 1
-				chunk_size = 500 * 1024 * 1024
-				
 				chunk = chunk_size
-					
-				for pass_iteration in range(3):
+				
+				switch = {
+					0: bytearray([0x00, 0xAA]),
+					1: bytearray([0xFF, 0x55]),
+						
+					2: os.urandom(2)
+				}
+				
+				for i, pass_iteration in enumerate(range(3)):
 					free_space = original_free_space
-					chunk_data = None
-						
-					if pass_iteration == 0:
-						chunk_data = bytearray([0x00, 0x00])
-							
-					elif pass_iteration == 1:
-						chunk_data = bytearray([0xFF, 0xFF])
-						
-					elif pass_iteration == 2:
-						chunk_data = os.urandom(2)
+					chunk_data = switch[i]
 						
 					while free_space > 0:
 						if self.cleanup:
@@ -834,7 +1026,7 @@ class DataOverwriter:
 							os.remove(file_name)
 							return
 						
-						file.write(chunk_data * chunk)
+						file.write(chunk_data * int(chunk / 2))
 						free_space -= chunk
 					
 					os.fsync(file.fileno())
@@ -1141,8 +1333,9 @@ class Main:
 					
 					i = 0
 					
+					dt = DataOverwriter()
 					thread = self.thread_create(
-						callback = freespace_overwrite
+						callback = dt.freespace_overwrite
 					)
 					
 					total_start_time = time.time()
