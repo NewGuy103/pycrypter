@@ -1,9 +1,12 @@
 import base64
 import os
+import threading
 
+import traceback
 import shutil
 import secrets
 
+from typing import Callable, Any
 import cryptography
 from cryptography.hazmat.primitives.ciphers.aead import (
     ChaCha20Poly1305, AESGCM
@@ -367,6 +370,138 @@ def compare_hash(
 
     compare_output = secrets.compare_digest(hash_1, hash_2)
     return compare_output
+
+
+class ThreadManager:
+    def __init__(self):
+        self.error_list = []
+
+        self.threads_set = set()
+        self.semaphore = threading.Semaphore(5)
+
+    def _guard_clauses(
+            self,
+            threads_set: [list, set] = None,
+
+            error_list: list = None,
+            semaphore: threading.Semaphore = None,
+
+            callback_function: Callable = None
+    ) -> tuple:
+        if threads_set is None:
+            threads_set = self.threads_set
+        elif not isinstance(threads_set, set):
+            raise TypeError(f"threads_set expected set, got {type(threads_set)}")
+
+        if error_list is None:
+            error_list = self.error_list
+        elif not isinstance(error_list, list):
+            raise TypeError(f"error_list expected list, got {type(error_list)}")
+
+        # Semaphore guard clause
+        if not hasattr(semaphore, 'acquire'):
+            if semaphore is None:
+                semaphore = self.semaphore
+            else:
+                raise TypeError(f"expected a semaphore/lock, got {type(semaphore)}")
+
+        if not isinstance(threads_set, (list, set)):
+            raise TypeError(f"threads_set expected a list/set, got {type(threads_set)}")
+
+        if not callable(callback_function):
+            raise TypeError("object passed is not callable")
+
+        return threads_set, error_list, semaphore
+
+    def set_thread_count(self, num: int) -> None:
+        if not isinstance(num, int):
+            raise TypeError(f"num expected int, got type '{type(num).__name__}'")
+
+        if num < 1:
+            num = 1
+        self.semaphore = threading.Semaphore(num)
+
+        return
+
+    # thread worker
+    def worker(
+            self, callback_function: Callable,
+            semaphore: threading.Semaphore = None,
+            threads_set: set = None,
+
+            error_list: list = None,
+            *args, **kwargs
+    ) -> Any:
+        threads_set, error_list, semaphore = self._guard_clauses(
+            semaphore=semaphore,
+            threads_set=threads_set,
+
+            error_list=error_list,
+            callback_function=callback_function
+        )
+        result = None
+
+        current_thread = threading.current_thread()
+        type_name = type(callback_function).__name__
+
+        if type_name == "function":
+            func_name = callback_function.__name__
+        else:
+            func_name = type(callback_function).__name__
+
+        with semaphore:  # acquire and release the semaphore
+            try:
+                result = callback_function(*args, **kwargs)
+            except Exception as err:
+                if error_list is not None:
+                    # tb means traceback
+                    tb_dict = {}
+                    tb_msg = traceback.format_exc()
+
+                    tb_dict["name"] = type(err).__name__
+                    tb_dict["caller"] = func_name
+
+                    tb_dict["traceback"] = tb_msg
+
+                    error_list.append(tb_dict)
+                else:
+                    tb_msg = traceback.format_exc()
+                    print(tb_msg)
+            finally:
+                threads_set.remove(current_thread) if current_thread in threads_set else None
+
+        return result
+
+    # create a thread
+    def thread_create(
+            self, callback: Callable, *args,
+            semaphore: threading.Semaphore = None,
+
+            threads_set: set = None,
+            thread_name: str = "",
+
+            error_list: list = None,
+            **kwargs
+    ) -> threading.Thread:
+        threads_set, error_list, semaphore = self._guard_clauses(
+            semaphore=semaphore,
+            threads_set=threads_set,
+
+            error_list=error_list,
+            callback_function=callback
+        )
+
+        thread = threading.Thread(
+            target=self.worker,
+            args=(callback, semaphore, threads_set, error_list, *args),
+            kwargs=kwargs,
+            name=thread_name
+        )
+
+        threads_set.add(thread)
+        thread.start()
+
+        return thread
 
 
 class CipherManager:

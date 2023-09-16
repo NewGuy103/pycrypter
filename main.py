@@ -1,7 +1,5 @@
 # Required Modules
 import platform
-import traceback
-import importlib
 
 import os
 import sys
@@ -15,22 +13,12 @@ from dotenv import load_dotenv
 
 # Threading Modules
 import threading
+from methods import CipherManager, ThreadManager
 
-if platform.system() == "Windows":
-    win32api = importlib.import_module('win32api')
-    win32con = importlib.import_module('win32con')
-
-    win32file = importlib.import_module('win32file')
-    winnt = importlib.import_module('winnt')
-
-    MAXDWORD = getattr(winnt, 'MAXDWORD')
-    pywintypes = importlib.import_module('pywintypes')
-
-from methods import CipherManager
+from typing import Callable, Any
 PYCRYPTER_VERSION = "1.4.1"
 
 
-# terminal progress bar
 def progress_bar(iteration, total, prefix='', suffix='', decimals=1, length=50, fill='='):
     """
     Call sys.stdout.write() to write a progress bar to the terminal
@@ -79,125 +67,6 @@ def progress_bar(iteration, total, prefix='', suffix='', decimals=1, length=50, 
 
     sys.stdout.write('\r%s |%s| %s%% %s' % (prefix, bar, percent, suffix))
     sys.stdout.flush()
-
-
-class ThreadManager:
-    def __init__(self):
-        self.error_list = []
-
-        self.threads_set = set()
-        self.semaphore = threading.Semaphore(5)
-
-    def set_thread_count(self, num):
-        if not isinstance(num, int):
-            raise TypeError(f"num expected int, got {type(num).__name__}")
-
-        if num < 1:
-            num = 1
-        self.semaphore = threading.Semaphore(num)
-
-    # thread worker
-    def worker(
-            self, callback_function,
-            semaphore=None, threads_set=None,
-            error_list=None,
-            *args, **kwargs
-    ):
-
-        # Guard clauses
-        if threads_set is None:
-            threads_set = self.threads_set
-        elif not isinstance(threads_set, set):
-            raise TypeError(f"threads_set expected set, got {type(error_list)}")
-
-        if error_list is None:
-            error_list = self.error_list
-        elif not isinstance(error_list, list):
-            raise TypeError(f"error_list expected list, got {type(error_list)}")
-
-        # Semaphore guard clause
-        if not hasattr(semaphore, 'acquire'):
-            if semaphore is None:
-                semaphore = self.semaphore
-            else:
-                raise TypeError(f"expected a semaphore/lock, got {type(semaphore)}")
-
-        if not isinstance(threads_set, (list, set, tuple)):
-            raise TypeError(f"threads expected a list/set/tuple, got {type(threads_set)}")
-
-        try:
-            current_thread = threading.current_thread()
-            type_name = type(callback_function).__name__
-
-            if type_name == "function":
-                func_name = callback_function.__name__
-            else:
-                func_name = type(callback_function).__name__
-
-            with semaphore:  # acquire and release the semaphore
-                try:
-                    callback_function(*args, **kwargs)
-                except Exception as err:
-                    if error_list is not None:
-                        # tb means traceback
-                        tb_dict = {}
-                        tb_msg = traceback.format_exc()
-
-                        tb_dict["name"] = type(err).__name__
-                        tb_dict["caller"] = func_name
-
-                        tb_dict["traceback"] = tb_msg
-
-                        error_list.append(tb_dict)
-                    else:
-                        tb_msg = traceback.format_exc()
-                        print(tb_msg)
-                finally:
-                    threads_set.remove(current_thread) if current_thread in threads_set else None
-        except Exception:
-            print(f"\nexception caught at worker: \n")
-            traceback.print_exc()
-
-    # create a thread
-    def thread_create(
-            self, callback, *args,
-            semaphore=None, threads_set=None,
-
-            thread_name="", error_list=None,
-            **kwargs
-    ):
-
-        # Guard clauses
-        if threads_set is None:
-            threads_set = self.threads_set
-        elif not isinstance(threads_set, set):
-            raise TypeError(f"threads_set expected set, got {type(error_list)}")
-
-        if error_list is None:
-            error_list = self.error_list
-        elif not isinstance(error_list, list):
-            raise TypeError(f"error_list expected list, got {type(error_list)}")
-
-        if not hasattr(semaphore, 'acquire'):
-            if semaphore is None:
-                semaphore = self.semaphore
-            else:
-                raise TypeError(f"expected a semaphore/lock, got {type(semaphore)}")
-
-        if not isinstance(threads_set, (list, set, tuple)):
-            raise TypeError(f"threads_set expected a list/set/tuple, got {type(threads_set)}")
-
-        thread = threading.Thread(
-            target=self.worker,
-            args=(callback, semaphore, threads_set, error_list, *args),
-            kwargs=kwargs,
-            name=thread_name
-        )
-
-        threads_set.add(thread)
-        thread.start()
-
-        return thread
 
 
 # iterate through a directory and optionally a subdirectory
@@ -747,23 +616,50 @@ class Main:
 
 
 if __name__ == "__main__":
+    if platform.system() == "Windows":
+        # NOQA: Conditional import if the platform is Windows
+
+        import win32api  # NOQA
+        import win32con  # NOQA
+
+        import win32file  # NOQA
+        from winnt import MAXDWORD  # NOQA
+
+        import pywintypes  # NOQA
+
     main = Main()
 
 
-    def script_cleanup(signal=0, frame=None):
+    def script_cleanup(**_):
         main.cleanup = True
 
+
+    exit_call = lambda *_: script_cleanup()
 
     if platform.system() == "Windows":
         # kernel32 signal handler
         kernel32 = ctypes.windll.kernel32
         handler_type = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_ulong)
 
-        handler_func = handler_type(lambda signal: script_cleanup(signal))
+        handler_func = handler_type(script_cleanup)
         kernel32.SetConsoleCtrlHandler(handler_func, True)
 
-        signal.signal(signal.SIGINT, lambda signal, frame: None)
+        signal.signal(
+            signal.SIGINT,
+            exit_call
+        )
+        signal.signal(
+            signal.SIGTERM,
+            exit_call
+        )
     else:
-        signal.signal(signal.SIGINT, lambda signal, frame: script_cleanup(signal, frame=frame))
+        signal.signal(
+            signal.SIGINT,
+            exit_call
+        )
+        signal.signal(
+            signal.SIGTERM,
+            exit_call
+        )
 
     main.parse_args()
