@@ -725,8 +725,9 @@ class Main:
         thread.join()
 
         if verbose:
+            lines = f"|{'-' * 61}|"
             print(
-                f"\n|-------------------------------------------------------------|\n\nTotal files : {files_dict['count']}")
+                f"\n{lines}\n\nTotal files : {files_dict['count']}")
             print(f"Total files [processed] : {files_dict['finished']}")
 
             print(

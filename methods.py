@@ -6,10 +6,7 @@ import secrets
 
 import cryptography
 from cryptography.hazmat.primitives.ciphers.aead import (
-    ChaCha20Poly1305, AESGCM,
-    AESOCB3, AESSIV,
-
-    AESCCM
+    ChaCha20Poly1305, AESGCM
 )
 
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
@@ -26,17 +23,9 @@ def _prepare_types(
         prepare_type: str = '',
         **kwargs
 ):
-    message = kwargs.get('message')
-    label = kwargs.get('label')
-
-    rsa_key = kwargs.get('rsa_key')
-
-    hash_pepper = kwargs.get('hash_pepper')
-    password_pepper = kwargs.get('password_pepper')
-
     rsa_dict = {
         'message': {
-            'original': message,
+            'original': (message := kwargs.get('message')),
 
             'is_bytes': isinstance(message, bytes),
             'is_str': isinstance(message, str),
@@ -44,7 +33,7 @@ def _prepare_types(
             'error_msg': TypeError('message must be bytes or str')
         },
         'label': {
-            'original': label,
+            'original': (label := kwargs.get('label')),
 
             'is_bytes': isinstance(label, bytes),
             'is_str': isinstance(label, str),
@@ -53,16 +42,45 @@ def _prepare_types(
         },
 
         'rsa_key': {
-            'original': rsa_key,
+            'original': (rsa_key := kwargs.get('rsa_key')),
             'is_bytes': isinstance(rsa_key, bytes),
 
             'error_msg': TypeError('RSA key must be bytes')
         }
     }
+    aes_dict = {
+        'aes_data': {
+            'original': (aes_data := kwargs.get('aes_data')),
+            'is_bytes': isinstance(aes_data, bytes),
 
+            'is_str': isinstance(aes_data, str),
+            'error_msg': TypeError('data must be bytes or str')
+        },
+        'associated_data': {
+            'original': (associated_data := kwargs.get('associated_data')),
+            'is_bytes': isinstance(associated_data, bytes),
+
+            'is_str': isinstance(associated_data, str),
+            'error_msg': TypeError('associated data must be bytes or str')
+        },
+
+        'aes_key': {
+            'original': (aes_key := kwargs.get('aes_key')),
+            'is_bytes': isinstance(aes_key, bytes),
+
+            'error_msg': TypeError('AES key must be bytes')
+        },
+        'nonce': {
+            'original': (nonce := kwargs.get('nonce')),
+            'is_bytes': isinstance(nonce, bytes),
+
+            'error_msg': TypeError('Nonce must be bytes')
+        }
+    }
+    
     pepper_dict = {
         'hash_pepper': {
-            'original': hash_pepper,
+            'original': (hash_pepper := kwargs.get('hash_pepper')),
 
             'is_bytes': isinstance(hash_pepper, bytes),
             'is_str': isinstance(hash_pepper, str),
@@ -70,7 +88,7 @@ def _prepare_types(
             'error_msg': TypeError('hash pepper must be bytes or str')
         },
         'password_pepper': {
-            'original': password_pepper,
+            'original': (password_pepper := kwargs.get('password_pepper')),
 
             'is_bytes': isinstance(password_pepper, bytes),
             'is_str': isinstance(password_pepper, str),
@@ -78,10 +96,12 @@ def _prepare_types(
             'error_msg': TypeError('password pepper must be bytes or str')
         }
     }
-
+    
     prep_dicts = {
         'rsa': rsa_dict,
-        'pepper': pepper_dict
+        'pepper': pepper_dict,
+
+        'aes': aes_dict
     }
 
     prep_dict = prep_dicts.get(prepare_type, None)
@@ -1123,108 +1143,154 @@ class _AESMethods:
         self.hash_method = parent.hash_method
 
         self.chacha20 = _ChaCha20Methods(self)
+        self.gcm = _GCMMethods(self)
 
 
 class _ChaCha20Methods:
     def __init__(self, parent):
         self.hash_method = parent.hash_method
 
-    @staticmethod
-    def _encrypt(
-            data, key=b"",
-            associated_data=None
-    ):
+    # Method is supposed to be public
+    # noinspection PyMethodMayBeStatic
+    def encrypt(
+            self, data: [bytes, str],
+            key: bytes = b"",
+
+            nonce: bytes = b"",
+            associated_data: [bytes, str] = None
+    ) -> bytes:
+        """
+        Public method to encrypt with ChaCha20Poly1305.
+        This requires you to provide the nonce and key directly.
+
+        Quick help:
+
+        - _prepare_types simply prepares the data to become bytes.
+
+        :param data: [Required, can be bytes or str]
+        :param key: [Required, must be bytes]
+        :param nonce: [Required, must be bytes]
+        :param associated_data: [Optional, can be bytes or str]
+        :return: Encrypted data in bytes
+        """
+        data, associated_data, key, nonce = _prepare_types(
+            aes_data=data,
+            associated_data=associated_data,
+
+            aes_key=key, nonce=nonce
+        )
+
         chacha20 = ChaCha20Poly1305(key)
-        nonce = secrets.token_bytes(12)
-
         encrypted_data = chacha20.encrypt(nonce, data, associated_data)
-        return nonce, encrypted_data
 
-    @staticmethod
-    def _decrypt(
-            data, key=b"",
-            nonce=b"",
+        return encrypted_data
 
-            associated_data=None
-    ):
+    # Method is supposed to be public
+    # noinspection PyMethodMayBeStatic
+    def decrypt(
+            self, data: [bytes, str],
+            key: bytes = b"",
+
+            nonce: bytes = b"",
+            associated_data: [bytes, str] = None
+    ) -> bytes:
+        """
+        Public method to decrypt with ChaCha20Poly1305.
+        This requires you to provide the nonce and key directly.
+
+        Quick help:
+
+        - _prepare_types simply prepares the data to become bytes.
+
+        :param data: [Required, can be bytes or str]
+        :param key: [Required, must be bytes]
+        :param nonce: [Required, must be bytes]
+        :param associated_data: [Optional, can be bytes or str]
+        :return: Decrypted data in bytes
+        """
+        data, associated_data, key, nonce = _prepare_types(
+            aes_data=data,
+            associated_data=associated_data,
+
+            aes_key=key, nonce=nonce
+        )
         chacha20 = ChaCha20Poly1305(key)
         plaintext = chacha20.decrypt(nonce, data, associated_data)
 
         return plaintext
 
-    def kdf_encrypt(
-            self, data,
-            password=b"",
 
-            associated_data=None,
-            hash_pepper=b"",
+class _GCMMethods:
+    def __init__(self, parent):
+        self.hash_method = parent.hash_method
 
-            password_pepper=b""
-    ):
-        hash_pepper, password_pepper = _prepare_types(
-            prepare_type='pepper', hash_pepper=hash_pepper,
-            password_pepper=password_pepper
+    # Method is supposed to be public
+    # noinspection PyMethodMayBeStatic
+    def encrypt(
+            self, data: [bytes, str],
+            key: bytes = b"",
+
+            nonce: bytes = b"",
+            associated_data: [bytes, str] = None
+    ) -> bytes:
+        """
+        Public method to encrypt with AES-GCM.
+        This requires you to provide the nonce and key directly.
+
+        Quick help:
+
+        - _prepare_types simply prepares the data to become bytes.
+
+        :param data: [Required, can be bytes or str]
+        :param key: [Required, must be bytes]
+        :param nonce: [Required, must be bytes]
+        :param associated_data: [Optional, can be bytes or str]
+        :return: Encrypted data in bytes
+        """
+        data, associated_data, key, nonce = _prepare_types(
+            aes_data=data,
+            associated_data=associated_data,
+
+            aes_key=key, nonce=nonce
         )
 
-        salt = secrets.token_bytes(32)
+        gcm = AESGCM(key)
+        encrypted_data = gcm.encrypt(nonce, data, associated_data)
 
-        if not isinstance(data, bytes):
-            data = data.encode('utf-8')
+        return encrypted_data
 
-        kdf = PBKDF2HMAC(
-            algorithm=self.hash_method,
-            length=32,
-            salt=salt + hash_pepper,
-            iterations=100000
+    # Method is supposed to be public
+    # noinspection PyMethodMayBeStatic
+    def decrypt(
+            self, data: [bytes, str],
+            key: bytes = b"",
+
+            nonce: bytes = b"",
+            associated_data: [bytes, str] = None
+    ) -> bytes:
+        """
+        Public method to decrypt with AES-GCM.
+        This requires you to provide the nonce and key directly.
+
+        Quick help:
+
+        - _prepare_types simply prepares the data to become bytes.
+
+        :param data: [Required, can be bytes or str]
+        :param key: [Required, must be bytes]
+        :param nonce: [Required, must be bytes]
+        :param associated_data: [Optional, can be bytes or str]
+        :return: Decrypted data in bytes
+        """
+        data, associated_data, key, nonce = _prepare_types(
+            aes_data=data,
+            associated_data=associated_data,
+
+            aes_key=key, nonce=nonce
         )
+        gcm = AESGCM(key)
+        plaintext = gcm.decrypt(nonce, data, associated_data)
 
-        if isinstance(password, bytes):
-            key = kdf.derive(password + password_pepper)
-        else:
-            key = kdf.derive(password.encode("utf-8") + password_pepper)
-
-        chacha20 = ChaCha20Poly1305(key)
-        nonce = secrets.token_bytes(12)
-
-        encrypted_data = chacha20.encrypt(nonce, data, associated_data)
-        full_ciphertext = salt + nonce + encrypted_data
-        return full_ciphertext
-
-    def kdf_decrypt(
-            self, data,
-            password=b"",
-
-            associated_data=None,
-            hash_pepper=b"",
-
-            password_pepper=b""
-    ):
-        hash_pepper, password_pepper = _prepare_types(
-            prepare_type='pepper', hash_pepper=hash_pepper,
-            password_pepper=password_pepper
-        )
-
-        salt = data[:32]
-        data = data[32:]
-
-        kdf = PBKDF2HMAC(
-            algorithm=self.hash_method,
-            length=32,
-            salt=salt + hash_pepper,
-            iterations=100000
-        )
-
-        if isinstance(password, bytes):
-            key = kdf.derive(password + password_pepper)
-        else:
-            key = kdf.derive(password.encode("utf-8") + password_pepper)
-
-        chacha20 = ChaCha20Poly1305(key)
-
-        nonce = data[:12]
-        data = data[12:]
-
-        plaintext = chacha20.decrypt(nonce, data, associated_data)
         return plaintext
 
 
