@@ -11,12 +11,12 @@ import ctypes
 
 from dotenv import load_dotenv
 
-# Threading Modules
-import threading
+from typing import Final
+from typing import Iterable
+
 from methods import CipherManager, ThreadManager
 
-from typing import Callable, Any
-PYCRYPTER_VERSION = "1.4.1"
+PYCRYPTER_VERSION: Final = "1.4.1"
 
 
 def progress_bar(iteration, total, prefix='', suffix='', decimals=1, length=50, fill='='):
@@ -208,17 +208,16 @@ def iterate_dir(directory, iterate_tree=True, skip_dirs=None):
 class Main:
     def __init__(self):
         if __name__ != "__main__":
-            raise RuntimeError("class Main must be called as __main__")
+            raise RuntimeError("class Main must be called from __main__")
 
         # pepper | DO NOT LEAK THIS!
         load_dotenv("pepper.env")
 
-        self.hash_pepper = os.getenv("hash_pepper")
-        self.password_pepper = os.getenv("password_pepper")
+        self.hash_pepper = os.environ.get("hash_pepper", b"")
+        self.password_pepper = os.environ.get("password_pepper", b"")
 
         # cleanup variables
         self.cleanup = False
-        self.interactive = {'init': False}
 
         # misc
         self.thread_mgr = ThreadManager()
@@ -231,14 +230,10 @@ class Main:
 
         # self.parser objects
         self.args = None
+        self._add_args()
 
+    def _add_args(self) -> None:
         self.parser = argparse.ArgumentParser(description=f'Pycrypter CLI by NewGuy103. v{PYCRYPTER_VERSION}')
-
-        self.parser.add_argument(
-            '-rw', '--ransomware',
-            action="store_true",
-            help="Ransomware mode, this will fetch the user's folder and cipher files inside it [Excluding AppData]."
-        )
 
         self.parser.add_argument(
             '-e', '--encrypt',
@@ -250,18 +245,6 @@ class Main:
             '-d', '--decrypt',
             action="store_true",
             help='Decryption switch.'
-        )
-
-        self.parser.add_argument(
-            '-se', '--symmetric',
-            action="store_true",
-            help="Use symmetrical encryption."
-        )
-
-        self.parser.add_argument(
-            '-ae', '--asymmetric',
-            action="store_true",
-            help="Use asymmetrical encryption."
         )
 
         self.parser.add_argument(
@@ -313,57 +296,32 @@ class Main:
             nargs="+",
             help="Data to encrypt."
         )
+        return
 
-    def parse_args(self):
+    def parse_args(self) -> None:
         self.args = self.parser.parse_args()
 
         # Guard clauses
         if self.args.threads:
-            self.thread_mgr.semaphore = threading.Semaphore(self.args.threads)
+            self.thread_mgr.set_thread_count(self.args.threads)
 
         if self.args.encrypt and self.args.decrypt:
-            raise argparse.ArgumentError(None, "expected 1 required argument, got two [-e/--encrypt and -d/--decrypt]")
+            raise argparse.ArgumentError(
+                None,
+                "expected 1 required argument, got two: -e/--encrypt and -d/--decrypt"
+            )
 
         if not self.args.encrypt and not self.args.decrypt:
-            raise argparse.ArgumentError(None, "missing required argument: -e/--encrypt or -d/--decrypt")
-
-        if not self.args.symmetric and not self.args.asymmetric:
-            raise argparse.ArgumentError(None, "missing required argument: -se/--symmetric or -ae/--asymmetric")
-
-        if self.args.symmetric and self.args.asymmetric:
-            raise argparse.ArgumentError(None,
-                                         "expected 1 required argument, got two [-se/--symmetric or -ae/--asymmetric]")
-
-        if self.args.ransomware:
-            cipher_method = "encrypt" if self.args.encrypt else "decrypt"
-            current_user = os.getlogin()
-
-            self.cipher_directory(
-                f"C:\\Users\\{current_user}",
-                verbose=self.args.verbose,
-                password=password,
-                keep_copy=self.args.keep_copy,
-                cipher_method=cipher_method
+            raise argparse.ArgumentError(
+                None,
+                "missing required argument: -e/--encrypt or -d/--decrypt"
             )
-            sys.exit()
-
-        if self.args.file is None and self.args.directory is None:
-            raise argparse.ArgumentError(None, "missing required argument(s): -f/--file or -dr/--directory")
-
-        # Check encryption method and show the correct prompt
-        if self.args.symmetric:
-            password = getpass.getpass("Enter a password: ")
-
-        elif self.args.asymmetric and self.args.encrypt:
-            input("Enter file path of public key: ")
-
-        elif self.args.asymmetric and self.args.decrypt:
-            input("Enter file path of private key: ")
 
         cipher_method = "encrypt" if self.args.encrypt else "decrypt"
+        password = getpass.getpass("Enter password: ").encode('utf-8')
 
-        sys.stdout.write("|-------------------------------------------------------------|\n")
-        sys.stdout.flush()
+        separator = f"|{'-' * 61}|"
+        print(f"{separator}\n", end="")
 
         if self.args.file:
             self.cipher_file(
@@ -383,28 +341,29 @@ class Main:
                 cipher_method=cipher_method
             )
 
-    # Check each file/directory
-    def symmetric_cipher(self, message, key=b"", verbose=b""):
-        pass
+        return
 
     def cipher_file(
-            self, file_list,
-            skip_files=None, verbose=True,
+            self, file_list: [list, set, tuple],
+            verbose: bool = True,
 
-            password="", keep_copy=False,
-            cipher_method="encrypt", cipher_type="symmetric"
-    ):
+            password: [bytes, str] = b"",
+            keep_copy: bool = False,
+
+            cipher_method: str = "encrypt"
+    ) -> None:
         if cipher_method not in {"encrypt", "decrypt"}:
             raise TypeError('cipher_method must be encrypt/decrypt')
 
-        if cipher_type not in {"symmetric", "asymmetric"}:
-            raise TypeError('cipher_type must be symmetric/asymmetric')
-
-        if skip_files is None:
-            skip_files: set = set()
-
         files = set()
         files_dict = {'count': 0, 'finished': 0, 'exception_thrown': 0}
+
+        thread = None
+
+        if cipher_method == 'encrypt':
+            cipher_callback = self.encrypt_file
+        elif cipher_method == 'decrypt':
+            cipher_callback = self.decrypt_file
 
         for file in file_list:
             if os.path.isfile(file):
@@ -423,52 +382,30 @@ class Main:
                 else:
                     raise FileNotFoundError(f"No such file: {file}")
 
-        files_dict['exception_thrown'] = files_dict['count']
-
         for current_iteration, file in enumerate(files):
             if self.cleanup:
                 break
 
-            def call_cipher(*args, **kwargs):
-                if current_iteration + 1 == files_dict['count']:
-                    progress_bar(
-                        files_dict['count'],
-                        files_dict['count'],
+            iter_var = current_iteration
+            if current_iteration + 1 == files_dict['count']:
+                iter_var = files_dict['count']
 
-                        prefix='Progress: ',
-                        suffix='Complete',
+            progress_bar(
+                iter_var,
+                files_dict['count'],
 
-                        decimals=1,
-                        length=50,
+                prefix='Progress: ',
+                suffix='Complete',
 
-                        fill='='
-                    )
-                else:
-                    progress_bar(
-                        current_iteration,
-                        files_dict['count'],
+                decimals=1,
+                length=50,
 
-                        prefix='Progress: ',
-                        suffix='Complete',
-
-                        decimals=1,
-                        length=50,
-
-                        fill='='
-                    )
-
-                if cipher_method == "encrypt":
-                    self.encrypt_file(*args, **kwargs)
-                else:
-                    self.decrypt_file(*args, **kwargs)
-
-                files_dict['exception_thrown'] -= 1
-                files_dict['finished'] += 1
-
-                return
+                fill='='
+            )
 
             thread = self.thread_create(
-                callback=call_cipher,
+                # NOQA: cipher_callback is defined at the top
+                callback=cipher_callback, # NOQA
 
                 input_file=file,
                 password=password,
@@ -478,47 +415,79 @@ class Main:
                 password_pepper=self.password_pepper
             )
 
-        thread.join()
+        if thread is not None:
+            thread.join()
 
         if verbose:
-            print(
-                f"\n|-------------------------------------------------------------|\n\nTotal files : {files_dict['count']}")
-            print(f"Total files [processed] : {files_dict['finished']}")
+            separator = f"|{'-' * 61}|"
+            msg1 = (
+                f"\n{separator}"
+                "\n\n"
+                
+                "Total files parsed: "
+                f"{files_dict['count']}\n"
+                
+                "Files parsed successfully: "
+                f"{files_dict['finished']}\n"
+                
+                "Files not parsed: "
+                f"{files_dict['exception_thrown']}"
+            )
 
-            print(
-                f"Total: {files_dict['count']} | Completed: {files_dict['finished']} | Error thrown: {files_dict['exception_thrown']}\n")
+            msg2 = (
+                f"\n{separator}"
+                "\n\n"
+                
+                f"ThreadManager error list:\n"
+            )
 
-            print(f"Extra information: \nfiles_count: {files_dict['count']} | len(files): {len(files)}")
-            print(f"files_finished: {files_dict['finished']}\n")
+            print("\nVerbose logging information: ")
 
-            print(f"ThreadManager error-list: \n")
+            print(msg1)
+            print(msg2)
+
             err_list = list(self.thread_mgr.error_list)
+            for err_dict in err_list:
+                err_data = (
+                    f"Error name: {err_dict['name']}\n"
+                    f"Caller function: {err_dict['caller']}\n"
 
-            for dictionary in err_list:
-                print(f"Error name: {dictionary['name']}")
+                    f"Error traceback: \n{err_dict['traceback']}"
+                )
 
-                print(f"Caller function: {dictionary['caller']}\n")
-                print(f"Error traceback: \n{dictionary['traceback']}")
+                print(err_data)
 
-    def cipher_directory(self, directories, skip_directories=None, verbose=True, password="", keep_copy=False,
-                         cipher_method="encrypt"):
-        if cipher_method not in ["encrypt", "decrypt"]:
-            raise TypeError(f'cipher_method expected "encrypt" or "decrypt", got {type(cipher_method).__name__}')
+            return
 
-        if skip_directories is None:
-            skip_directories = set()
+    def cipher_directory(
+            self, dirs: [list, set, tuple],
+            verbose: bool = True,
+
+            password: [bytes, str] = b"",
+            keep_copy: bool = False,
+
+            cipher_method: str = "encrypt"
+    ) -> None:
+        if cipher_method not in {"encrypt", "decrypt"}:
+            raise TypeError('cipher_method must be encrypt/decrypt')
 
         files = set()
         folders = set()
 
         files_dict = {'count': 0, 'finished': 0, 'exception_thrown': 0}
+        thread = None
 
-        for folder in directories:
+        if cipher_method == 'encrypt':
+            cipher_callback = self.encrypt_file
+        elif cipher_method == 'decrypt':
+            cipher_callback = self.decrypt_file
+
+        for folder in dirs:
             if os.path.isdir(folder):
                 folders.add(folder)
                 continue
 
-            if len(directories) > 1:
+            if len(dirs) > 1:
                 if os.path.isdir(folder):
                     print(f"NotADirectoryError: Is a directory: {folder}")
                 else:
@@ -530,7 +499,7 @@ class Main:
                     raise FileNotFoundError(f"No such directory: {folder}")
 
         for i, folder in enumerate(folders):
-            returned_files = iterate_dir(folder, iterate_tree=True, skip_dirs=skip_directories)
+            returned_files = iterate_dir(folder, iterate_tree=True)
 
             for file in returned_files:
                 files.add(file)
@@ -538,50 +507,30 @@ class Main:
                 if file in files:
                     files_dict['count'] += 1
 
-        files_dict['exception_thrown'] = files_dict['count']
-
         for current_iteration, file in enumerate(files):
             if self.cleanup:
                 break
 
-            def call_cipher(*args, **kwargs):
-                if current_iteration + 1 == files_dict['count']:
-                    progress_bar(
-                        files_dict['count'],
-                        files_dict['count'],
+            iter_var = current_iteration
+            if current_iteration + 1 == files_dict['count']:
+                iter_var = files_dict['count']
 
-                        prefix='Progress: ',
-                        suffix='Complete',
+            progress_bar(
+                iter_var,
+                files_dict['count'],
 
-                        decimals=1,
-                        length=50,
+                prefix='Progress: ',
+                suffix='Complete',
 
-                        fill='='
-                    )
-                else:
-                    progress_bar(
-                        current_iteration,
-                        files_dict['count'],
+                decimals=1,
+                length=50,
 
-                        prefix='Progress: ',
-                        suffix='Complete',
-
-                        decimals=1,
-                        length=50,
-
-                        fill='='
-                    )
-
-                if cipher_method == "encrypt":
-                    self.encrypt_file(*args, **kwargs)
-                else:
-                    self.decrypt_file(*args, **kwargs)
-
-                files_dict['exception_thrown'] -= 1
-                files_dict['finished'] += 1
+                fill='='
+            )
 
             thread = self.thread_create(
-                callback=call_cipher,
+                # NOQA: cipher_callback is defined at the top
+                callback=cipher_callback,  # NOQA
 
                 input_file=file,
                 password=password,
@@ -591,34 +540,54 @@ class Main:
                 password_pepper=self.password_pepper
             )
 
-        thread.join()
+        if thread is not None:
+            thread.join()
 
         if verbose:
-            lines = f"|{'-' * 61}|"
-            print(
-                f"\n{lines}\n\nTotal files : {files_dict['count']}")
-            print(f"Total files [processed] : {files_dict['finished']}")
+            separator = f"|{'-' * 61}|"
+            msg1 = (
+                f"\n{separator}"
+                "\n\n"
 
-            print(
-                f"Total: {files_dict['count']} | Completed: {files_dict['finished']} | Error thrown: {files_dict['exception_thrown']}\n")
+                "Total files parsed: "
+                f"{files_dict['count']}\n"
 
-            print(f"Extra information: \nfiles_count: {files_dict['count']} | len(files): {len(files)}")
-            print(f"files_finished: {files_dict['finished']}\n")
+                "Files parsed successfully: "
+                f"{files_dict['finished']}\n"
 
-            print(f"ThreadManager error-list: \n")
+                "Files not parsed: "
+                f"{files_dict['exception_thrown']}"
+            )
+
+            msg2 = (
+                f"\n{separator}"
+                "\n\n"
+
+                f"ThreadManager error list:\n"
+            )
+
+            print("\nVerbose logging information: ")
+
+            print(msg1)
+            print(msg2)
+
             err_list = list(self.thread_mgr.error_list)
+            for err_dict in err_list:
+                err_data = (
+                    f"Error name: {err_dict['name']}\n"
+                    f"Caller function: {err_dict['caller']}\n"
 
-            for dictionary in err_list:
-                print(f"Error name: {dictionary['name']}")
+                    f"Error traceback: \n{err_dict['traceback']}"
+                )
 
-                print(f"Caller function: {dictionary['caller']}\n")
-                print(f"Error traceback: \n{dictionary['traceback']}")
+                print(err_data)
+
+            return
 
 
 if __name__ == "__main__":
     if platform.system() == "Windows":
         # NOQA: Conditional import if the platform is Windows
-
         import win32api  # NOQA
         import win32con  # NOQA
 
@@ -630,11 +599,12 @@ if __name__ == "__main__":
     main = Main()
 
 
-    def script_cleanup(**_):
+    def script_cleanup(*_, **__):
         main.cleanup = True
 
-
-    exit_call = lambda *_: script_cleanup()
+    # NOQA: PyCharm shows a warning when
+    # passing script_cleanup directly to signal.signal()
+    exit_call = lambda *_: script_cleanup() # NOQA
 
     if platform.system() == "Windows":
         # kernel32 signal handler

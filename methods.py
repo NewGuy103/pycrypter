@@ -444,7 +444,7 @@ class ThreadManager:
         current_thread = threading.current_thread()
         type_name = type(callback_function).__name__
 
-        if type_name == "function":
+        if type_name == "method":
             func_name = callback_function.__name__
         else:
             func_name = type(callback_function).__name__
@@ -620,7 +620,7 @@ class _FernetMethods:
             kdf_key: bytes = b"", password: bytes = b"",
 
             keep_copy: bool = False, hash_pepper: bytes = b"",
-            password_pepper: object = b""
+            password_pepper: bytes = b""
     ) -> None:
         if keep_copy not in {True, False}:
             raise TypeError(f"keep_copy expected boolean, got '{keep_copy}'")
