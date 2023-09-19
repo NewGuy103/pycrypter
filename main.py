@@ -1,208 +1,239 @@
 # Required Modules
 import platform
-
 import os
-import sys
 import argparse
 
 import getpass
 import signal
 import ctypes
 
+import sys
+
 from dotenv import load_dotenv
-
 from typing import Final
-from typing import Iterable
 
-from methods import CipherManager, ThreadManager
+from _methods import (
+    CipherManager, ThreadManager,
+    progress_bar, iterate_dir
+)
 
-PYCRYPTER_VERSION: Final = "1.4.1"
+__all__ = [
+    "CipherManager", "ThreadManager",
+    "progress_bar", "iterate_dir",
+    "PYCRYPTER_VERSION"
+]
 
-
-def progress_bar(iteration, total, prefix='', suffix='', decimals=1, length=50, fill='='):
-    """
-    Call sys.stdout.write() to write a progress bar to the terminal
-
-    Parameters:
-        iteration (int): current iteration (required)
-            The current iteration of the loop.
-
-        total (int): total iterations (required)
-            The total number of iterations for the loop
-
-        prefix (str): prefix string (optional, defaults to "")
-            A string that appears before the progress bar.
-
-        suffix (str): suffix string (optional, defaults to "")
-            A string that appears after the progress bar.
-
-        decimals (int): positive number of decimals in percent complete (optional, defaults to 1)
-            The number of decimal places to show in the percentage.
-
-        length (int): character length of bar (optional, defaults to 50)
-            The length of the progress bar.
-
-        fill (str): bar fill character (optional, defaults to "=")
-            The character used to fill the progress bar.
-
-    Returns:
-        None
-
-    Example usage:
-        progress_bar(10, 100, prefix='Progress:', suffix='Complete', decimals=1, length=50, fill='=')
-
-        Output:
-            Progress: |=====---------------------------------------------| 10.0% Complete
-    """
-
-    if not isinstance(iteration, int):
-        raise TypeError(f"total expected an integer, got {type(iteration).__name__}")
-
-    if not isinstance(total, int):
-        raise TypeError(f"total expected an integer, got {type(total).__name__}")
-
-    percent = ("{0:." + str(decimals) + "f}").format(100 * (iteration / float(total)))
-    filled_length = int(length * iteration // total)
-    bar = fill * filled_length + '-' * (length - filled_length)
-
-    sys.stdout.write('\r%s |%s| %s%% %s' % (prefix, bar, percent, suffix))
-    sys.stdout.flush()
+PYCRYPTER_VERSION: Final = "1.4.2"
 
 
-# iterate through a directory and optionally a subdirectory
-def iterate_dir(directory, iterate_tree=True, skip_dirs=None):
-    """
-    Iterate through a directory while optionally iterating through the subdirectories
+class _InteractiveCLI:
+    def __init__(self, parent):
+        self.password = None
+        self.recovery_key = None
+        self.thread_mgr = parent.thread_mgr
+        self.cleanup = parent.cleanup
 
-    Parameters:
-        directory (str): directory to iterate (required)
-            The directory passed to iterate through.
+        self.cipher_file = parent.cipher_file
+        self.cipher_directory = parent.cipher_directory
 
-        iterate_tree (bool): iterate through subdirectories (optional, defaults to True)
-            Defines whether the script iterates through subdirectories or not.
+        self._load_messages()
 
-        skip_dirs (list): list of directories to skip (optional, defaults to []/empty list)
-            Defines the subdirectories to exclude from the search.
+    def _load_messages(self):
+        self.messages = {}
 
-        Returns:
-            set: file_paths
-            - Returns absolute paths
+    @staticmethod
+    def _return_error(error_type, **kwargs):
+        cmd_name = kwargs.get("cmd_name")
+        message = kwargs.get("message")
 
-        Example usage:
-            Passing a non-boolean [True, False] to
-            the iterate_tree argument will result in a ValueError:
+        match error_type:
+            case 'invalid_command':
+                err_type = (
+                    f"Error: Command '{cmd_name}' is not "
+                    "a recognized command!"
+                )
+            case 'not_integer':
+                err_type = (
+                    f"Error: '{message}' is not an integer!"
+                )
+            case 'missing_arg':
+                err_type = (
+                    f"Error: Missing argument: '{message}'"
+                )
+            case _:
+                print(f"Could not get error message for error type '{error_type}'")
+                return
 
-            Traceback (most recent call last):
-              File "C:\\MyPython\\pycrypter.py", line 1, in <module>
-                raise ValueError("iterate_tree must be a valid boolean")
-            ValueError: iterate_tree must be a valid boolean
+        print(err_type)
+        return
 
-            [Passing True, False, 1, 0 is a valid boolean]
+    @staticmethod
+    def _parse_str(input_string):
+        tokens = []
+        current_token = ""
+        in_quotes = False
 
-            =========================================================
-            Passing a non-existent directory/a file will not raise
-            an exception, but instead return a string value, signaling
-            an error:
+        for char in input_string:
+            if char == '"':
+                if in_quotes:
+                    tokens.append(current_token)
+                    current_token = ""
+                in_quotes = not in_quotes
+            elif char == ' ' and not in_quotes:
+                if current_token:
+                    tokens.append(current_token)
+                    current_token = ""
+            else:
+                current_token += char
 
-            Example 1:
-                files = iterate_dir("C:\\MyFakeDirectory", iterate_tree=True, skip_dirs=[])
+        if current_token:
+            tokens.append(current_token)
 
-                print(files)
+        return tokens
 
-                [Output]
-                NotADirectoryError
+    def mainloop(self):
+        while not self.cleanup:
+            user_input = input("pycrypter> ")
+            args = self._parse_str(user_input)
 
-            Example 2:
-                files = iterate_dir("C:\\MyPython\\myfile.txt", iterate_tree=True, skip_dirs=[])
-
-                print(files)
-
-                [Output]
-                NotADirectoryError
-
-            =========================================================
-            A PermissionError exception will be caught, and added to
-            an exception list:
-
-            import win32api
-            import win32con
-
-            # Set the system attribute for the MyPython folder
-            win32api.SetFileAttributes("C:\\MyPython\\", win32con.FILE_ATTRIBUTE_SYSTEM)
-
-            permission_errors = []
-
-            # Assume this code has two files, the script and "sys.txt"
-            files = iterate_dir("C:\\MyPython\\", iterate_tree=True, skip_dirs=[])
-
-            print(files)
-            print(permission_errors)
-
-            [Output]
-            []
-            ['iterate_dir | A PermissionError occured! Path: "C:\\MyPython"']
-
-            ---------------------------------------------------------
-            How to call:
-
-            files = iterate_dir(".", iterate_tree=True, skip_dirs=[])
-
-            print(files)
-
-            ---------------------------------------------------------
-            We can assume that the files in the current working directory
-            is the current script file and a.txt, so this will be the output:
-
-            ['.\\pycrypter.py', '.\\a.txt']
-            ---------------------------------------------------------
-
-            If you use "." or ".." as the directory argument, any added to
-            the list will be formatted as so:
-
-            ['.\\example.txt', '..\\myfile.txt']
-
-            However, using the absolute path like so:
-            iterate_dir("C:\\MyPython\\", iterate_tree=True, skip_dirs=[])
-
-            Will return the absolute path, formatted like this:
-
-            ['C:\\MyPython\\a.txt']
-    """
-
-    if not skip_dirs:
-        skip_dirs = set()
-
-    if iterate_tree not in [True, False]:
-        raise TypeError(f"iterate_tree expected boolean, got {iterate_tree}")
-
-    file_paths = set()
-
-    # Check argument if it's a directory
-    if not os.path.isdir(directory):
-        if os.path.isfile(directory):
-            raise NotADirectoryError(f'Not a directory: {directory}')
-        else:
-            raise FileNotFoundError(f'No such directory: {directory}')
-
-    # Iterate through the directory, and catch PermissionErrors
-    try:
-        directory = os.path.abspath(directory)
-
-        for filename in os.listdir(directory):
-            path = os.path.join(directory, filename)
-
-            if path in skip_dirs:
+            if len(args) == 0:
                 continue
 
-            if os.path.isfile(path):
-                file_paths.add(path)
+            if user_input == "exit":
+                break
 
-            elif os.path.isdir(path) and iterate_tree:
-                file_paths.update(iterate_dir(path))
-    except PermissionError as err:
-        raise err
-    finally:
-        return file_paths
+            cipher_switches = {
+                'keep_copy': (
+                        "-c" in args
+                        or
+                        "--keep-copy" in args
+                ),
+                'verbose': (
+                        '-v' in args
+                        or
+                        '--verbose' in args
+                ),
+
+                'directory': (
+                        '-dr' in args
+                        or
+                        '--directory' in args
+                )
+            }
+
+            match args[0]:
+                case "password":
+                    try:
+                        key = args[1]
+                    except IndexError:
+                        self._return_error(
+                            "missing_arg",
+                            message="Positional argument 1"
+                        )
+                        continue
+
+                    self.password = key
+                case "recovery-key":
+                    try:
+                        key = args[1]
+                    except IndexError:
+                        self._return_error(
+                            "missing_arg",
+                            message="Positional argument 1"
+                        )
+                        continue
+
+                    self.recovery_key = key
+                case "thread-count":
+                    try:
+                        num = int(args[1])
+                    except ValueError:
+                        self._return_error(
+                            "not_integer",
+                            message=args[1]
+                        )
+                        continue
+
+                    self.thread_mgr.set_thread_count(num)
+                case "encrypt":
+                    switches = cipher_switches
+                    dirs = None
+                    files = None
+
+                    if switches['directory']:
+                        filenames = input("Enter directories here: ")
+                        dirs = set(self._parse_str(filenames))
+                    else:
+                        filenames = input("Enter filenames here: ")
+                        files = set(self._parse_str(filenames))
+
+                    if self.password is None:
+                        password = getpass.getpass("Enter password: ")
+                    else:
+                        password = self.password
+
+                    if switches['directory']:
+                        self.cipher_directory(
+                            dirs,
+                            verbose=switches['verbose'],
+
+                            password=password,
+                            keep_copy=switches['keep_copy'],
+
+                            cipher_method='encrypt'
+                        )
+                    else:
+                        self.cipher_file(
+                            files,
+                            verbose=switches['verbose'],
+
+                            password=password,
+                            keep_copy=switches['keep_copy'],
+
+                            cipher_method='decrypt'
+                        )
+                case "decrypt":
+                    switches = cipher_switches
+                    dirs = None
+                    files = None
+
+                    if switches['directory']:
+                        filenames = input("Enter directories here: ")
+                        dirs = set(self._parse_str(filenames))
+                    else:
+                        filenames = input("Enter filenames here: ")
+                        files = set(self._parse_str(filenames))
+
+                    if self.password is None:
+                        password = getpass.getpass("Enter password: ")
+                    else:
+                        password = self.password
+
+                    if switches['directory']:
+                        self.cipher_directory(
+                            dirs,
+                            verbose=switches['verbose'],
+
+                            password=password,
+                            keep_copy=switches['keep_copy'],
+
+                            cipher_method='encrypt'
+                        )
+                    else:
+                        self.cipher_file(
+                            files,
+                            verbose=switches['verbose'],
+
+                            password=password,
+                            keep_copy=switches['keep_copy'],
+
+                            cipher_method='decrypt'
+                        )
+                case _:
+                    self._return_error(
+                        "invalid_command",
+                        cmd_name=args[0]
+                    )
 
 
 class Main:
@@ -232,9 +263,16 @@ class Main:
         self.args = None
         self._add_args()
 
+        self.cli = _InteractiveCLI(self)
+
     def _add_args(self) -> None:
         self.parser = argparse.ArgumentParser(description=f'Pycrypter CLI by NewGuy103. v{PYCRYPTER_VERSION}')
 
+        self.parser.add_argument(
+            '-i', '--interactive',
+            action="store_true",
+            help="Script interactive mode."
+        )
         self.parser.add_argument(
             '-e', '--encrypt',
             action="store_true",
@@ -288,18 +326,14 @@ class Main:
             nargs="+",
             help='Directory path(s) to specify.'
         )
-
-        self.parser.add_argument(
-            '-dt', '--data',
-            metavar='passed_data',
-            type=str,
-            nargs="+",
-            help="Data to encrypt."
-        )
         return
 
     def parse_args(self) -> None:
         self.args = self.parser.parse_args()
+
+        if self.args.interactive:
+            self.cli.mainloop()
+            sys.exit()
 
         # Guard clauses
         if self.args.threads:
@@ -318,7 +352,7 @@ class Main:
             )
 
         cipher_method = "encrypt" if self.args.encrypt else "decrypt"
-        password = getpass.getpass("Enter password: ").encode('utf-8')
+        password = getpass.getpass("Enter password: ")
 
         separator = f"|{'-' * 61}|"
         print(f"{separator}\n", end="")
@@ -405,7 +439,7 @@ class Main:
 
             thread = self.thread_create(
                 # NOQA: cipher_callback is defined at the top
-                callback=cipher_callback, # NOQA
+                callback=cipher_callback,  # NOQA
 
                 input_file=file,
                 password=password,
@@ -423,13 +457,13 @@ class Main:
             msg1 = (
                 f"\n{separator}"
                 "\n\n"
-                
+
                 "Total files parsed: "
                 f"{files_dict['count']}\n"
-                
+
                 "Files parsed successfully: "
                 f"{files_dict['finished']}\n"
-                
+
                 "Files not parsed: "
                 f"{files_dict['exception_thrown']}"
             )
@@ -437,7 +471,7 @@ class Main:
             msg2 = (
                 f"\n{separator}"
                 "\n\n"
-                
+
                 f"ThreadManager error list:\n"
             )
 
@@ -602,9 +636,10 @@ if __name__ == "__main__":
     def script_cleanup(*_, **__):
         main.cleanup = True
 
+
     # NOQA: PyCharm shows a warning when
     # passing script_cleanup directly to signal.signal()
-    exit_call = lambda *_: script_cleanup() # NOQA
+    exit_call = lambda *_: script_cleanup()  # NOQA
 
     if platform.system() == "Windows":
         # kernel32 signal handler

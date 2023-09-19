@@ -2,6 +2,8 @@ import base64
 import os
 import threading
 
+import sys
+
 import traceback
 import shutil
 import secrets
@@ -21,7 +23,206 @@ from cryptography.fernet import Fernet
 from cryptography.hazmat.primitives.asymmetric import rsa, padding
 
 
+# Front facing methods
+def progress_bar(iteration, total, prefix='', suffix='', decimals=1, length=50, fill='='):
+    """
+    Call sys.stdout.write() to write a progress bar to the terminal
+
+    Parameters:
+        iteration (int): current iteration (required)
+            The current iteration of the loop.
+
+        total (int): total iterations (required)
+            The total number of iterations for the loop
+
+        prefix (str): prefix string (optional, defaults to "")
+            A string that appears before the progress bar.
+
+        suffix (str): suffix string (optional, defaults to "")
+            A string that appears after the progress bar.
+
+        decimals (int): positive number of decimals in percent complete (optional, defaults to 1)
+            The number of decimal places to show in the percentage.
+
+        length (int): character length of bar (optional, defaults to 50)
+            The length of the progress bar.
+
+        fill (str): bar fill character (optional, defaults to "=")
+            The character used to fill the progress bar.
+
+    Returns:
+        None
+
+    Example usage:
+        progress_bar(10, 100, prefix='Progress:', suffix='Complete', decimals=1, length=50, fill='=')
+
+        Output:
+            Progress: |=====---------------------------------------------| 10.0% Complete
+    """
+
+    if not isinstance(iteration, int):
+        raise TypeError(f"total expected an integer, got {type(iteration).__name__}")
+
+    if not isinstance(total, int):
+        raise TypeError(f"total expected an integer, got {type(total).__name__}")
+
+    percent = ("{0:." + str(decimals) + "f}").format(100 * (iteration / float(total)))
+    filled_length = int(length * iteration // total)
+    bar = fill * filled_length + '-' * (length - filled_length)
+
+    sys.stdout.write('\r%s |%s| %s%% %s' % (prefix, bar, percent, suffix))
+    sys.stdout.flush()
+
+
+# iterate through a directory and optionally a subdirectory
+def iterate_dir(directory, iterate_tree=True, skip_dirs=None):
+    """
+    Iterate through a directory while optionally iterating through the subdirectories
+
+    Parameters:
+        directory (str): directory to iterate (required)
+            The directory passed to iterate through.
+
+        iterate_tree (bool): iterate through subdirectories (optional, defaults to True)
+            Defines whether the script iterates through subdirectories or not.
+
+        skip_dirs (list): list of directories to skip (optional, defaults to []/empty list)
+            Defines the subdirectories to exclude from the search.
+
+        Returns:
+            set: file_paths
+            - Returns absolute paths
+
+        Example usage:
+            Passing a non-boolean [True, False] to
+            the iterate_tree argument will result in a ValueError:
+
+            Traceback (most recent call last):
+              File "C:\\MyPython\\pycrypter.py", line 1, in <module>
+                raise ValueError("iterate_tree must be a valid boolean")
+            ValueError: iterate_tree must be a valid boolean
+
+            [Passing True, False, 1, 0 is a valid boolean]
+
+            =========================================================
+            Passing a non-existent directory/a file will not raise
+            an exception, but instead return a string value, signaling
+            an error:
+
+            Example 1:
+                files = iterate_dir("C:\\MyFakeDirectory", iterate_tree=True, skip_dirs=[])
+
+                print(files)
+
+                [Output]
+                NotADirectoryError
+
+            Example 2:
+                files = iterate_dir("C:\\MyPython\\myfile.txt", iterate_tree=True, skip_dirs=[])
+
+                print(files)
+
+                [Output]
+                NotADirectoryError
+
+            =========================================================
+            A PermissionError exception will be caught, and added to
+            an exception list:
+
+            import win32api
+            import win32con
+
+            # Set the system attribute for the MyPython folder
+            win32api.SetFileAttributes("C:\\MyPython\\", win32con.FILE_ATTRIBUTE_SYSTEM)
+
+            permission_errors = []
+
+            # Assume this code has two files, the script and "sys.txt"
+            files = iterate_dir("C:\\MyPython\\", iterate_tree=True, skip_dirs=[])
+
+            print(files)
+            print(permission_errors)
+
+            [Output]
+            []
+            ['iterate_dir | A PermissionError occured! Path: "C:\\MyPython"']
+
+            ---------------------------------------------------------
+            How to call:
+
+            files = iterate_dir(".", iterate_tree=True, skip_dirs=[])
+
+            print(files)
+
+            ---------------------------------------------------------
+            We can assume that the files in the current working directory
+            is the current script file and a.txt, so this will be the output:
+
+            ['.\\pycrypter.py', '.\\a.txt']
+            ---------------------------------------------------------
+
+            If you use "." or ".." as the directory argument, any added to
+            the list will be formatted as so:
+
+            ['.\\example.txt', '..\\myfile.txt']
+
+            However, using the absolute path like so:
+            iterate_dir("C:\\MyPython\\", iterate_tree=True, skip_dirs=[])
+
+            Will return the absolute path, formatted like this:
+
+            ['C:\\MyPython\\a.txt']
+    """
+
+    if not skip_dirs:
+        skip_dirs = set()
+
+    if iterate_tree not in [True, False]:
+        raise TypeError(f"iterate_tree expected boolean, got {iterate_tree}")
+
+    file_paths = set()
+
+    # Check argument if it's a directory
+    if not os.path.isdir(directory):
+        if os.path.isfile(directory):
+            raise NotADirectoryError(f'Not a directory: {directory}')
+        else:
+            raise FileNotFoundError(f'No such directory: {directory}')
+
+    # Iterate through the directory, and catch PermissionErrors
+    try:
+        directory = os.path.abspath(directory)
+
+        for filename in os.listdir(directory):
+            path = os.path.join(directory, filename)
+
+            if path in skip_dirs:
+                continue
+
+            if os.path.isfile(path):
+                file_paths.add(path)
+
+            elif os.path.isdir(path) and iterate_tree:
+                file_paths.update(iterate_dir(path))
+    except PermissionError as err:
+        raise err
+    finally:
+        return file_paths
+
+
 # Static methods
+def _type_name(input_type: Any):
+    """
+    Return the name of the type passed in arguments.
+
+    This function is simply to provide more context in
+    the match/case statements.
+    :param input_type:
+    :return: Type name of input_type
+    """
+    return type(input_type).__name__
+
+
 def _prepare_types(
         prepare_type: str = '',
         **kwargs
@@ -110,7 +311,7 @@ def _prepare_types(
     prep_dict = prep_dicts.get(prepare_type, None)
 
     if prep_dict is None:
-        raise ValueError('Invalid type to prepare')
+        raise ValueError('Invalid type methods to prepare')
 
     check_types = []
 
@@ -142,7 +343,7 @@ def _fernet_file_encrypt(
 
         is_precomputed: bool = False
 ) -> None:
-    if len(key) < 32:
+    if len(key) != 32:
         raise ValueError("Key length is invalid for fernet.")
 
     with open(input_file, "rb+") as file:
@@ -165,7 +366,7 @@ def _fernet_file_encrypt(
             chunk_encrypted = Fernet(fernet_key).encrypt(chunk)
             file.write(chunk_encrypted)
 
-            chunk = file.read(50 * 1024 * 1024)  # Read 50MB at a time
+            chunk = file.read(50 * 1024 * 1024)
         return
 
 
@@ -175,7 +376,7 @@ def _fernet_file_decrypt(
 
         is_precomputed: bool = False
 ) -> None:
-    if len(key) < 32:
+    if len(key) != 32:
         raise ValueError("Key length is invalid for fernet.")
 
     with open(input_file, "rb+") as file:
@@ -186,15 +387,7 @@ def _fernet_file_decrypt(
             file.seek(32, os.SEEK_SET)
 
         chunk = file.read(50 * 1024 * 1024)
-        decrypt_successful = False
-
-        try:
-            Fernet(fernet_key).decrypt(chunk)
-            decrypt_successful = True
-        except cryptography.fernet.InvalidToken as error:
-            raise error
-        finally:
-            file.close() if not decrypt_successful else None
+        Fernet(fernet_key).decrypt(chunk)
 
         # Erase/keep the file
         if keep_copy:
@@ -225,7 +418,7 @@ def _fernet_data_encrypt(
 
         is_precomputed: bool = False
 ) -> bytes:
-    if len(key) < 32:
+    if len(key) != 32:
         raise ValueError("Key length is invalid for fernet.")
 
     if is_precomputed:
@@ -244,7 +437,7 @@ def _fernet_data_decrypt(
         data: [bytes, str], key: bytes = b"",
         is_precomputed: bool = False
 ) -> bytes:
-    if len(key) < 32:
+    if len(key) != 32:
         raise ValueError("Key length is invalid for fernet.")
 
     if not is_precomputed:
@@ -254,122 +447,6 @@ def _fernet_data_decrypt(
     decrypted_data = Fernet(fernet_key).decrypt(data)
 
     return decrypted_data
-
-
-# Classes
-def generate_peppers(
-        env_path: str = "pepper.env",
-        skip_prompt: bool = False
-) -> None:
-    """
-    Generate peppers to use for PBKDF2HMAC.
-
-    Quick help:
-        This function is a simple and easy way to generate peppers,
-        but make sure to keep the peppers hidden and safe.
-
-        You can optionally provide a name, or let it default to pepper.env
-
-    Parameters:
-        self [class parameter]
-        env_path [defaults to pepper.env]
-
-        skip_prompt [defaults to False]
-
-    How to use:
-        Call the function.
-            # >>> generate_peppers()
-            Wrote peppers to pepper.env, please make sure to keep the peppers in a safe area.
-
-        -- You can check pepper.env, then use load_dotenv("pepper.env") and os.environ[]
-
-        Call the function with an optional name:
-            # >>> generate_peppers("some_peppers.env")
-            Wrote peppers to pepper.env, please make sure to keep the peppers in a safe area.
-
-        -- Same thing above, but now it's named "some_peppers.env"
-
-        If the pepper already exists:
-            # >>> generate_peppers()
-            Warning: pepper.env already exists, overwrite? [Y/N]:
-            -- You can choose to overwrite it, or return.
-
-        Optionally, skip the prompt:
-            # >>> generate_peppers(skip_prompt=True)
-            Wrote peppers to pepper.env, please make sure to keep the peppers in a safe area.
-    """
-
-    if os.path.isdir(env_path):
-        raise IsADirectoryError(f"Is a directory: {env_path}")
-
-    if os.path.isfile(env_path) and not skip_prompt:
-        confirm = input(f"Warning: {env_path} already exists, overwrite? [Y/N]: ")
-
-        if confirm.lower() == "y":
-            pass
-        else:
-            return
-
-    with open(env_path, "w") as file:
-        hash_pepper = secrets.token_bytes(32)
-        password_pepper = secrets.token_bytes(32)
-
-        file.write(f"hash_pepper={str(hash_pepper)}\n")
-        file.write(f"password_pepper={str(password_pepper)}")
-
-        print(f"Wrote peppers to {env_path}, please make sure to keep the peppers in a safe area.")
-    return
-
-
-def compare_hash(
-        hash_1: str,
-        hash_2: str
-) -> bool:
-    """
-    Compare a hash using secrets.compare_digest.
-
-    Quick help:
-        Comparing hashes using "==" is a bad idea,
-        Using a digest comparison function is better.
-
-        The reason being is that "==" is susceptible to
-        timing attacks. Which is a method of side-channel
-        attacks which gets the time it takes to
-        compare a string, the more time it takes
-        to compare, the closer you are cracking the password.
-
-
-        This simply compares the hash digest
-        [The hex, which looks like 223d3c2cdafefk . . .]
-
-        Note: This also works with strings like "digest1"
-
-    Parameters:
-        self [class parameter]
-
-        hash_1 [first hash]
-        hash_2 [second hash]
-
-    How to use:
-        Pass two hashes as parameters.
-            # >>> hash_1 = "d04b98f48e8f8bcc15c6ae5ac050801cd6dcfd428fb5f9e65c4e16e7807340fa"
-            # >>> hash_2 = "d04b98f48e8f8bcc15c6ae5ac050801cd6dcfd428fb5f9e65c4e16e7807340fa"
-            -- Both hashes are the same, also the input string was "hash"
-
-            # >>> compare_hash(hash_1, hash_2)
-            True
-
-        This is useful for checking if the hash matches an input:
-            # >>> expected_hash = "d04b98f48e8f8bcc15c6ae5ac050801cd6dcfd428fb5f9e65c4e16e7807340fa"
-            # >>> input_hash = hash_string(input("Enter the string: "))
-
-            -- The value of "falsehash" is: "45b7033e65585da8eda3fe91064a091b7321643078c569ef3d694a0c29f864fb"
-            # >>> compare_hash(expected_hash, input_hash)
-            False
-    """
-
-    compare_output = secrets.compare_digest(hash_1, hash_2)
-    return compare_output
 
 
 class ThreadManager:
@@ -388,21 +465,30 @@ class ThreadManager:
 
             callback_function: Callable = None
     ) -> tuple:
-        if threads_set is None:
-            threads_set = self.threads_set
-        elif not isinstance(threads_set, set):
-            raise TypeError(f"threads_set expected set, got {type(threads_set)}")
+        match threads_set:
+            case set():
+                pass
+            case None:
+                threads_set = self.threads_set
+            case _:
+                raise TypeError(
+                    f"threads_set expected set, got {type(threads_set)}"
+                )
 
-        if error_list is None:
-            error_list = self.error_list
-        elif not isinstance(error_list, list):
-            raise TypeError(f"error_list expected list, got {type(error_list)}")
+        match error_list:
+            case list():
+                pass
+            case None:
+                error_list = self.error_list
+            case _:
+                raise TypeError(f"error_list expected list, got {type(error_list)}")
 
-        # Semaphore guard clause
-        if not hasattr(semaphore, 'acquire'):
-            if semaphore is None:
+        match semaphore:
+            case (threading.Semaphore(), threading.Lock()):
+                pass
+            case None:
                 semaphore = self.semaphore
-            else:
+            case _:
                 raise TypeError(f"expected a semaphore/lock, got {type(semaphore)}")
 
         if not isinstance(threads_set, (list, set)):
@@ -419,8 +505,8 @@ class ThreadManager:
 
         if num < 1:
             num = 1
-        self.semaphore = threading.Semaphore(num)
 
+        self.semaphore = threading.Semaphore(num)
         return
 
     # thread worker
@@ -514,6 +600,121 @@ class CipherManager:
         # self.aes = _AESMethods(self)
         return
 
+    @staticmethod
+    def generate_peppers(
+            env_path: str = "pepper.env",
+            skip_prompt: bool = False
+    ) -> None:
+        """
+        Generate peppers to use for PBKDF2HMAC.
+
+        Quick help:
+            This function is a simple and easy way to generate peppers,
+            but make sure to keep the peppers hidden and safe.
+
+            You can optionally provide a name, or let it default to pepper.env
+
+        Parameters:
+            self [class parameter]
+            env_path [defaults to pepper.env]
+
+            skip_prompt [defaults to False]
+
+        How to use:
+            Call the function.
+                # >>> generate_peppers()
+                Wrote peppers to pepper.env, please make sure to keep the peppers in a safe area.
+
+            -- You can check pepper.env, then use load_dotenv("pepper.env") and os.environ[]
+
+            Call the function with an optional name:
+                # >>> generate_peppers("some_peppers.env")
+                Wrote peppers to pepper.env, please make sure to keep the peppers in a safe area.
+
+            -- Same thing above, but now it's named "some_peppers.env"
+
+            If the pepper already exists:
+                # >>> generate_peppers()
+                Warning: pepper.env already exists, overwrite? [Y/N]:
+                -- You can choose to overwrite it, or return.
+
+            Optionally, skip the prompt:
+                # >>> generate_peppers(skip_prompt=True)
+                Wrote peppers to pepper.env, please make sure to keep the peppers in a safe area.
+        """
+
+        if os.path.isdir(env_path):
+            raise IsADirectoryError(f"Is a directory: {env_path}")
+
+        if os.path.isfile(env_path) and not skip_prompt:
+            confirm = input(f"Warning: {env_path} already exists, overwrite? [Y/N]: ")
+
+            if confirm.lower() == "y":
+                pass
+            else:
+                return
+
+        with open(env_path, "w") as file:
+            hash_pepper = secrets.token_bytes(32)
+            password_pepper = secrets.token_bytes(32)
+
+            file.write(f"hash_pepper={str(hash_pepper)}\n")
+            file.write(f"password_pepper={str(password_pepper)}")
+
+            print(f"Wrote peppers to {env_path}, please make sure to keep the peppers in a safe area.")
+        return
+
+    @staticmethod
+    def compare_hash(
+            hash_1: str,
+            hash_2: str
+    ) -> bool:
+        """
+        Compare a hash using secrets.compare_digest.
+
+        Quick help:
+            Comparing hashes using "==" is a bad idea,
+            Using a digest comparison function is better.
+
+            The reason being is that "==" is susceptible to
+            timing attacks. Which is a method of side-channel
+            attacks which gets the time it takes to
+            compare a string, the more time it takes
+            to compare, the closer you are cracking the password.
+
+
+            This simply compares the hash digest
+            [The hex, which looks like 223d3c2cdafefk . . .]
+
+            Note: This also works with strings like "digest1"
+
+        Parameters:
+            hash_1 [first hash]
+            hash_2 [second hash]
+
+        How to use:
+            Pass two hashes as parameters.
+                # >>> hash_1 = "d04b98f48e8f8bcc15c6ae5ac050801cd6dcfd428fb5f9e65c4e16e7807340fa"
+                # >>> hash_2 = "d04b98f48e8f8bcc15c6ae5ac050801cd6dcfd428fb5f9e65c4e16e7807340fa"
+                -- Both hashes are the same, also the input string was "hash"
+
+                # >>> compare_hash(hash_1, hash_2)
+
+                True
+
+            This is useful for checking if the hash matches an input:
+                # >>> expected_hash = "d04b98f48e8f8bcc15c6ae5ac050801cd6dcfd428fb5f9e65c4e16e7807340fa"
+                # >>> input_hash = hash_string(input("Enter the string: "))
+
+                -- The value of "falsehash" is: "45b7033e65585da8eda3fe91064a091b7321643078c569ef3d694a0c29f864fb"
+                # >>> compare_hash(expected_hash, input_hash)
+
+                False
+        """
+
+        compare_output = secrets.compare_digest(hash_1, hash_2)
+        return compare_output
+
     def hash_string(
             self, input_string: str,
             hash_method: object = None
@@ -547,10 +748,13 @@ class CipherManager:
         if hash_method is None:
             hash_method = self.hash_method
 
-        if not isinstance(input_string, bytes):
-            bytes_passed = input_string.encode('utf-8')
-        else:
-            bytes_passed = input_string
+        match _type_name(input_string):
+            case "str":
+                bytes_passed = input_string.encode('utf-8')
+            case "bytes":
+                bytes_passed = input_string
+            case _:
+                raise TypeError("input string must be bytes/str")
 
         digest = hashes.Hash(hash_method)
 
@@ -603,10 +807,14 @@ class CipherManager:
             iterations=100000
         )
 
-        if isinstance(input_key, bytes):
-            key = kdf.derive(input_key + password_pepper)
-        else:
-            key = kdf.derive(input_key.encode("utf-8") + password_pepper)
+        match _type_name(input_key):
+            case "bytes":
+                key = kdf.derive(input_key + password_pepper)
+            case "str":
+                input_key = input_key.encode('utf-8')
+                key = kdf.derive(input_key + password_pepper)
+            case _:
+                raise TypeError("Key must be bytes or str")
 
         return key
 
@@ -654,12 +862,14 @@ class _FernetMethods:
             iterations=100000
         )
 
-        key = None
-
-        if isinstance(password, bytes):
-            key = kdf.derive(password + password_pepper)
-        elif isinstance(password, str):
-            key = kdf.derive(password.encode("utf-8") + password_pepper)
+        match _type_name(password):
+            case "bytes":
+                key = kdf.derive(password + password_pepper)
+            case "str":
+                input_key = password.encode('utf-8')
+                key = kdf.derive(input_key + password_pepper)
+            case _:
+                raise TypeError("Key must be bytes or str")
 
         _fernet_file_encrypt(input_file, salt=salt, key=key, keep_copy=keep_copy)
         return
@@ -706,10 +916,14 @@ class _FernetMethods:
             iterations=100000
         )
 
-        if isinstance(password, bytes):
-            key = kdf.derive(password + password_pepper)
-        else:
-            key = kdf.derive(password.encode("utf-8") + password_pepper)
+        match _type_name(password):
+            case "bytes":
+                key = kdf.derive(password + password_pepper)
+            case "str":
+                input_key = password.encode('utf-8')
+                key = kdf.derive(input_key + password_pepper)
+            case _:
+                raise TypeError("Key must be bytes or str")
 
         _fernet_file_decrypt(input_file, key=key, keep_copy=keep_copy, is_precomputed=False)
         return
@@ -744,10 +958,14 @@ class _FernetMethods:
             iterations=100000
         )
 
-        if isinstance(password, bytes):
-            key = kdf.derive(password + password_pepper)
-        else:
-            key = kdf.derive(password.encode("utf-8") + password_pepper)
+        match _type_name(password):
+            case "bytes":
+                key = kdf.derive(password + password_pepper)
+            case "str":
+                input_key = password.encode('utf-8')
+                key = kdf.derive(input_key + password_pepper)
+            case _:
+                raise TypeError("Key must be bytes or str")
 
         return _fernet_data_encrypt(data=data, salt=salt, key=key, is_precomputed=False)
 
@@ -781,10 +999,14 @@ class _FernetMethods:
             iterations=100000
         )
 
-        if isinstance(password, bytes):
-            key = kdf.derive(password + password_pepper)
-        else:
-            key = kdf.derive(password.encode("utf-8") + password_pepper)
+        match _type_name(password):
+            case "bytes":
+                key = kdf.derive(password + password_pepper)
+            case "str":
+                input_key = password.encode('utf-8')
+                key = kdf.derive(input_key + password_pepper)
+            case _:
+                raise TypeError("Key must be bytes or str")
 
         return _fernet_data_decrypt(data=data, key=key, is_precomputed=False)
 
@@ -796,9 +1018,9 @@ class _RSAMethods:
         self.private_key = None
         self.public_key = None
 
-    # noinspection PyMethodMayBeStatic
+    @staticmethod
     def generate_keys(
-            self, key_length: int = 2048,
+            key_length: int = 2048,
             public_exponent: int = 65537,
 
             password: bytes = b"", output_to: str = "file"
