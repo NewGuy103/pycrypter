@@ -484,7 +484,9 @@ class ThreadManager:
                 raise TypeError(f"error_list expected list, got {type(error_list)}")
 
         match semaphore:
-            case (threading.Semaphore(), threading.Lock()):
+            case threading.Semaphore():
+                pass
+            case threading.Lock():
                 pass
             case None:
                 semaphore = self.semaphore

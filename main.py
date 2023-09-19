@@ -190,7 +190,7 @@ class _InteractiveCLI:
                             password=password,
                             keep_copy=switches['keep_copy'],
 
-                            cipher_method='decrypt'
+                            cipher_method='encrypt'
                         )
                 case "decrypt":
                     switches = cipher_switches
