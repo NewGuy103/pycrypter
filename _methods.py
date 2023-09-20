@@ -281,7 +281,7 @@ def _prepare_types(
             'error_msg': TypeError('Nonce must be bytes')
         }
     }
-    
+
     pepper_dict = {
         'hash_pepper': {
             'original': (hash_pepper := kwargs.get('hash_pepper')),
@@ -300,7 +300,7 @@ def _prepare_types(
             'error_msg': TypeError('password pepper must be bytes or str')
         }
     }
-    
+
     prep_dicts = {
         'rsa': rsa_dict,
         'pepper': pepper_dict,
@@ -465,14 +465,16 @@ class ThreadManager:
 
             callback_function: Callable = None
     ) -> tuple:
+        sem_type = type(semaphore)
+
         match threads_set:
             case set():
                 pass
             case None:
                 threads_set = self.threads_set
-            case _:
+            case _ if not None:
                 raise TypeError(
-                    f"threads_set expected set, got {type(threads_set)}"
+                    f"threads_set expected set, got '{type(threads_set).__name__}'"
                 )
 
         match error_list:
@@ -480,21 +482,22 @@ class ThreadManager:
                 pass
             case None:
                 error_list = self.error_list
-            case _:
-                raise TypeError(f"error_list expected list, got {type(error_list)}")
+            case _ if not None:
+                raise TypeError(
+                    f"error_list expected list, got '{type(threads_set).__name__}'"
+                )
 
-        match semaphore:
-            case threading.Semaphore():
+        match sem_type:
+            case threading.Semaphore | threading.Lock:
                 pass
-            case threading.Lock():
-                pass
-            case None:
+            case _:
+                print(type(None) is sem_type)
+                if type(None) is not sem_type:
+                    raise TypeError(
+                        f"expected a semaphore/lock, got '{sem_type.__name__}'"
+                    )
+
                 semaphore = self.semaphore
-            case _:
-                raise TypeError(f"expected a semaphore/lock, got {type(semaphore)}")
-
-        if not isinstance(threads_set, (list, set)):
-            raise TypeError(f"threads_set expected a list/set, got {type(threads_set)}")
 
         if not callable(callback_function):
             raise TypeError("object passed is not callable")

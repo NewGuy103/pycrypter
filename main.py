@@ -96,6 +96,8 @@ class _InteractiveCLI:
             user_input = input("pycrypter> ")
             args = self._parse_str(user_input)
 
+            self.thread_mgr.error_list = []
+
             if len(args) == 0:
                 continue
 
@@ -128,7 +130,7 @@ class _InteractiveCLI:
                     except IndexError:
                         self._return_error(
                             "missing_arg",
-                            message="Positional argument 1"
+                            message="password"
                         )
                         continue
 
@@ -139,7 +141,7 @@ class _InteractiveCLI:
                     except IndexError:
                         self._return_error(
                             "missing_arg",
-                            message="Positional argument 1"
+                            message="recovery_key"
                         )
                         continue
 
@@ -151,6 +153,12 @@ class _InteractiveCLI:
                         self._return_error(
                             "not_integer",
                             message=args[1]
+                        )
+                        continue
+                    except IndexError:
+                        self._return_error(
+                            "missing_arg",
+                            message="thread_count"
                         )
                         continue
 
@@ -217,7 +225,7 @@ class _InteractiveCLI:
                             password=password,
                             keep_copy=switches['keep_copy'],
 
-                            cipher_method='encrypt'
+                            cipher_method='decrypt'
                         )
                     else:
                         self.cipher_file(
@@ -386,6 +394,16 @@ class Main:
 
             cipher_method: str = "encrypt"
     ) -> None:
+        """
+        Cipher a set of file(s) with extra parameters.
+
+        :param file_list: A list/set/tuple including the file paths.
+        :param verbose: Verbose output or no output.
+        :param password: The key for ciphering the file.
+        :param keep_copy: Keep a copy of the file
+        :param cipher_method: "encrypt" or "decrypt"
+        :return: None
+        """
         if cipher_method not in {"encrypt", "decrypt"}:
             raise TypeError('cipher_method must be encrypt/decrypt')
 
@@ -452,6 +470,11 @@ class Main:
         if thread is not None:
             thread.join()
 
+        files_dict['exception_thrown'] = len(self.thread_mgr.error_list)
+        files_dict['finished'] = files_dict['count']
+
+        files_dict['finished'] -= len(self.thread_mgr.error_list)
+
         if verbose:
             separator = f"|{'-' * 61}|"
             msg1 = (
@@ -502,6 +525,16 @@ class Main:
 
             cipher_method: str = "encrypt"
     ) -> None:
+        """
+        Cipher a set of file(s) inside directories with extra parameters.
+
+        :param dirs: A list/set/tuple including the directory paths.
+        :param verbose: Verbose output or no output.
+        :param password: The key for ciphering the file.
+        :param keep_copy: Keep a copy of the file
+        :param cipher_method: "encrypt" or "decrypt"
+        :return: None
+        """
         if cipher_method not in {"encrypt", "decrypt"}:
             raise TypeError('cipher_method must be encrypt/decrypt')
 
@@ -576,6 +609,11 @@ class Main:
 
         if thread is not None:
             thread.join()
+
+        files_dict['exception_thrown'] = len(self.thread_mgr.error_list)
+        files_dict['finished'] = files_dict['count']
+
+        files_dict['finished'] -= len(self.thread_mgr.error_list)
 
         if verbose:
             separator = f"|{'-' * 61}|"
