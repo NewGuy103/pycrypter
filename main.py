@@ -12,6 +12,8 @@ import sys
 from dotenv import load_dotenv
 from typing import Final
 
+from collections.abc import Iterable
+
 from _methods import (
     CipherManager, ThreadManager,
     progress_bar, iterate_dir
@@ -28,23 +30,197 @@ PYCRYPTER_VERSION: Final = "1.4.2"
 
 class _InteractiveCLI:
     def __init__(self, parent):
+        self.public_key = None
+        self.private_key = None
+
         self.password = None
         self.recovery_key = None
-        self.thread_mgr = parent.thread_mgr
+
+        self.cipher_mgr = CipherManager()
+        self.thread_mgr = ThreadManager()
+
         self.cleanup = parent.cleanup
 
         self.cipher_file = parent.cipher_file
         self.cipher_directory = parent.cipher_directory
 
-        self._load_messages()
+    def _rsa_match(self, args: list | Iterable):
+        def load_keys(keys_iterable):
+            self.public_key = keys_iterable[0]
+            self.private_key = keys_iterable[1]
 
-    def _load_messages(self):
-        self.messages = {}
+        """
+        Normally this return won't happen but
+        this is here to prevent an IndexError
+        
+        if someone passes an empty iterable
+        or a non-iterable.
+        
+        Why I didn't raise an error is because
+        it would crash the interactive CLI.
+        """
+        if len(args) < 1:
+            return "args_is_0"
+        elif not isinstance(args, Iterable):
+            return "not_iterable"
+
+        match args[0]:
+            case "rsa-makekeys":
+                if len(args[1:]) != 2:
+                    key_names = ["public-key", "private-key"]
+                else:
+                    key_names = args[1:]
+
+                print(key_names)
+
+                keys = self.cipher_mgr.rsa.generate_keys(
+                    output_to="file-caller", key_names=key_names
+                )
+
+                load_keys(keys)
+
+                print(
+                    "Outputted and loaded keys to "
+                    f"{key_names[0]}.pem and "
+                    
+                    f"{key_names[1]}.pem!"
+                )
+            case "rsa-loadkeys":
+                if len(args[1:]) != 2:
+                    keypath_1 = input("Enter public key path: ")
+                    keypath_2 = input("Enter private key path: ")
+
+                    key_names = [keypath_1, keypath_2]
+                else:
+                    key_names = args[1:]
+
+                key_data = []
+                for key_path in key_names:
+                    if not os.path.isfile(key_path):
+                        self._return_error(
+                            "not_file",
+                            message=key_path
+                        )
+                        return False
+
+                with open(key_names[0], "rb") as pb_k:
+                    key_data.append(pb_k.read())
+                with open(key_names[1], "rb") as pv_k:
+                    key_data.append(pv_k.read())
+
+                try:
+                    self.cipher_mgr.rsa.load_keys(
+                        key_data[0], key_data[1]
+                    )
+                except ValueError:
+                    self._return_error(
+                        "invalid_rsa_key_paths",
+                        key_paths=key_names
+                    )
+                    return False
+
+                load_keys(key_data)
+
+                print(
+                    f"Loaded keys from '{key_names[0]}' "
+                    f"and '{key_names[1]}'!"
+                )
+            case "rsa-encrypt":
+                input_type = (
+                    "console" if "-ci" in args
+                    or "--console-input" in args
+
+                    else "file"
+                )
+
+                if len(args[1:]) != 1 and self.public_key is None:
+                    keyfile = args[0]
+                    with open(keyfile, "rb") as kf:
+                        key_data = kf.read()
+                else:
+                    key_data = self.public_key
+
+                output_path = input("Enter output path [console/filename]: ")
+
+                if input_type == "console":
+                    data = input("Enter data to encrypt: ")
+                else:
+                    enc_filename = input("Enter file path: ")
+
+                    if not os.path.isfile(enc_filename):
+                        self._return_error(
+                            "not_file",
+                            message=enc_filename
+                        )
+                        return False
+
+                    with open(enc_filename, "rb") as in_file:
+                        data = in_file.read()
+
+                enc_data = self.cipher_mgr.rsa.manual_encrypt(
+                    data, key_data
+                )
+
+                if output_path == "console":
+                    print(f"Encrypted output: \n{enc_data}\n")
+                else:
+                    with open(f"{output_path}.enc", "wb") as out_path:
+                        out_path.write(enc_data)
+            case "rsa-decrypt":
+                input_type = (
+                    "console" if "-ci" in args
+                    or "--console-input" in args
+
+                    else "file"
+                )
+
+                if len(args[1:]) != 1 and self.private_key is None:
+                    keyfile = args[0]
+                    with open(keyfile, "rb") as kf:
+                        key_data = kf.read()
+                else:
+                    key_data = self.private_key
+
+                output_path = input("Enter output path [console/filename]: ")
+
+                if input_type == "console":
+                    data = input("Enter encrypted data: ")
+                else:
+                    enc_filename = input("Enter file path: ")
+
+                    if not os.path.isfile(enc_filename):
+                        self._return_error(
+                            "not_file",
+                            message=enc_filename
+                        )
+                        return False
+
+                    with open(enc_filename, "rb") as in_file:
+                        data = in_file.read()
+
+                dec_data = self.cipher_mgr.rsa.manual_decrypt(
+                    data, key_data
+                )
+
+                if output_path == "console":
+                    print(f"Decrypted output: \n{dec_data}\n")
+                else:
+                    with open(f"{output_path}.dec", "wb") as out_path:
+                        out_path.write(dec_data)
+            case _:
+                return None
+
+        return True
 
     @staticmethod
     def _return_error(error_type, **kwargs):
         cmd_name = kwargs.get("cmd_name")
         message = kwargs.get("message")
+
+        rsa_keypaths = kwargs.get(
+            'key_paths',
+            ["public-key", "private-key"]
+        )
 
         match error_type:
             case 'invalid_command':
@@ -59,6 +235,19 @@ class _InteractiveCLI:
             case 'missing_arg':
                 err_type = (
                     f"Error: Missing argument: '{message}'"
+                )
+            case 'missing_key':
+                err_type = (
+                    "Error: Password is not set or missing!"
+                )
+            case 'not_file':
+                err_type = (
+                    f"Error: The file '{message}' is not a valid file path!"
+                )
+            case 'invalid_rsa_key_paths':
+                err_type = (
+                    f"Error: The keys inside '{rsa_keypaths[0]}' and "
+                    f"'{rsa_keypaths[1]}' are invalid!"
                 )
             case _:
                 print(f"Could not get error message for error type '{error_type}'")
@@ -93,16 +282,16 @@ class _InteractiveCLI:
 
     def mainloop(self):
         while not self.cleanup:
-            user_input = input("pycrypter> ")
-            args = self._parse_str(user_input)
+            try:
+                user_input = input("pycrypter> ")
+            except EOFError:
+                break
 
+            args = self._parse_str(user_input)
             self.thread_mgr.error_list = []
 
             if len(args) == 0:
                 continue
-
-            if user_input == "exit":
-                break
 
             cipher_switches = {
                 'keep_copy': (
@@ -123,7 +312,17 @@ class _InteractiveCLI:
                 )
             }
 
+            rsa_output = self._rsa_match(args)
+            match rsa_output:
+                case True | False:
+                    print("Command already completed, continuing. . .")
+                    continue
+                case None:
+                    pass
+
             match args[0]:
+                case "exit" | "quit":
+                    break
                 case "password":
                     try:
                         key = args[1]
@@ -135,6 +334,7 @@ class _InteractiveCLI:
                         continue
 
                     self.password = key
+                    print("Password successfully set!")
                 case "recovery-key":
                     try:
                         key = args[1]
@@ -145,7 +345,27 @@ class _InteractiveCLI:
                         )
                         continue
 
-                    self.recovery_key = key
+                    if self.password is None:
+                        self._return_error(
+                            "missing_key"
+                        )
+                        continue
+
+                    encrypted_key = self.cipher_mgr.fernet.encrypt_data(
+                        self.password, password=key
+                    )
+
+                    with open("recovery-key.key", "wb") as keyfile:
+                        keyfile.write(b"Recovery key: \n")
+                        keyfile.write(key.encode('utf-8'))
+
+                        keyfile.write(b"\nEncrypted key: ")
+                        keyfile.write(encrypted_key)
+
+                    print(
+                        "Written recovery key and encrypted password",
+                        "to recovery-key.key!"
+                    )
                 case "thread-count":
                     try:
                         num = int(args[1])
@@ -163,6 +383,7 @@ class _InteractiveCLI:
                         continue
 
                     self.thread_mgr.set_thread_count(num)
+                    print(f"Set thread count to {num}")
                 case "encrypt":
                     switches = cipher_switches
                     dirs = None
@@ -237,6 +458,15 @@ class _InteractiveCLI:
 
                             cipher_method='decrypt'
                         )
+                case "reload":
+                    print("Reloading interactive CLI. . .")
+
+                    if sys.argv and sys.argv[0].endswith('.py'):
+                        os.system(f"python {__file__} -i")
+                    else:
+                        os.system(f"{__file__} -i")
+
+                    sys.exit()
                 case _:
                     self._return_error(
                         "invalid_command",

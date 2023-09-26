@@ -9,6 +9,8 @@ import shutil
 import secrets
 
 from typing import Callable, Any
+from collections.abc import Iterable
+
 import cryptography
 from cryptography.hazmat.primitives.ciphers.aead import (
     ChaCha20Poly1305, AESGCM
@@ -447,6 +449,57 @@ def _fernet_data_decrypt(
     decrypted_data = Fernet(fernet_key).decrypt(data)
 
     return decrypted_data
+
+
+def key_creator(
+        public_exponent: int = 65537,
+        key_length: int = 2048,
+
+        password: bytes = b"",
+        output_to: str = "file",
+
+        key_names: Iterable | None = None
+) -> tuple | None:
+    # Create the private key then derive the public key
+    private_key = rsa.generate_private_key(
+        public_exponent=public_exponent,
+        key_size=key_length
+    )
+    public_key = private_key.public_key()
+
+    if password:
+        encryption_algorithm = serialization.BestAvailableEncryption(password)
+    else:
+        encryption_algorithm = serialization.NoEncryption()
+
+    # Create the public and private key bytes
+    private_key_bytes = private_key.private_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PrivateFormat.PKCS8,
+
+        encryption_algorithm=encryption_algorithm
+    )
+    public_key_bytes = public_key.public_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PublicFormat.SubjectPublicKeyInfo
+    )
+
+    if output_to == "caller":
+        return public_key_bytes, private_key_bytes
+
+    if key_names is None or sum(1 for _ in key_names) != 2:
+        key_names = ["public-key", "private-key"]
+
+    # Write the key bytes to a file
+    with open(f"{key_names[0]}.pem", "wb") as file:
+        file.write(public_key_bytes)
+    with open(f"{key_names[1]}.pem", "wb") as file:
+        file.write(private_key_bytes)
+
+    if output_to == "file-caller":
+        return public_key_bytes, private_key_bytes
+
+    return
 
 
 class ThreadManager:
@@ -1028,8 +1081,11 @@ class _RSAMethods:
             key_length: int = 2048,
             public_exponent: int = 65537,
 
-            password: bytes = b"", output_to: str = "file"
-    ) -> (tuple, None):
+            password: bytes = b"",
+            output_to: str = "file",
+
+            key_names: Iterable | None = None
+    ) -> tuple | None:
         """
         Generate an RSA public and private key.
 
@@ -1042,88 +1098,54 @@ class _RSAMethods:
 
             File format:
 
-            - public_key-{number}.pem
-            - private_key-{number}.pem
+            - {filename | "public-key"}.pem [public_key]
+            - {filename | "private-key"}.pem [private_key]
 
             Number refers to a random number between 1 and 65537.
 
+        :param key_names: [Iterable | None, default: None]
         :param key_length: [integer, default: 2048]
         :param public_exponent: [integer, default: 65537]
         :param password: [bytes, defaults to b"" or empty byte string]
-        :param output_to: [str, must be "file" or "caller", defaults to "file"]
+        :param output_to: [str, "file" | "caller" | "file-caller", default: "file"]
         :return: (b"public-key", b"private-key") | None
         """
+        errors = {
+            "kl": TypeError("Key length must be an integer"),
+            "pe": TypeError("Public exponent must be an integer"),
 
-        def key_creator():
-            # Create the private key then derive the public key
-            private_key = rsa.generate_private_key(
-                public_exponent=public_exponent,
-                key_size=key_length
-            )
-            public_key = private_key.public_key()
+            "pw": TypeError("Password must be bytes"),
+            "kn1": TypeError("Key names must be an iterable"),
 
-            if password:
-                encryption_algorithm = serialization.BestAvailableEncryption(password)
-            else:
-                encryption_algorithm = serialization.NoEncryption()
-
-            # Create the public and private key bytes
-            private_key_bytes = private_key.private_bytes(
-                encoding=serialization.Encoding.PEM,
-                format=serialization.PrivateFormat.PKCS8,
-
-                encryption_algorithm=encryption_algorithm
-            )
-            public_key_bytes = public_key.public_bytes(
-                encoding=serialization.Encoding.PEM,
-                format=serialization.PublicFormat.SubjectPublicKeyInfo
-            )
-
-            number = secrets.randbelow(65537)
-
-            # Write the key bytes to a file
-            if output_to == "file":
-                with open(f"public_key-{number}.pem", "wb") as file:
-                    file.write(public_key_bytes)
-                with open(f"private_key-{number}.pem", "wb") as file:
-                    file.write(private_key_bytes)
-            elif output_to == "caller":
-                return public_key_bytes, private_key_bytes
-
-            return
-
-        error_dict = {
-            'key_length': (
-                isinstance(key_length, int),
-                TypeError(
-                    "key_length must be an integer"
-                )
-            ),
-
-            'public_exponent': (
-                isinstance(public_exponent, int),
-                TypeError(
-                    "public_exponent must be an integer"
-                )
-            ),
-
-            'output_to': (
-                output_to in {"file", "caller"},
-                ValueError(
-                    "output method must be file/caller"
-                )
-            )
+            "kn2": ValueError("Key names must explicitly have 2 items")
         }
+        key_names = [] if key_names is None else key_names
 
-        for check_type, error_tuple in error_dict.items():
-            check_result = error_tuple[0]
-            error_type = error_tuple[1]
+        if not isinstance(key_length, int):
+            raise errors['kl']
 
-            if not check_result:
-                raise error_type
+        if not isinstance(public_exponent, int):
+            raise errors['pe']
+
+        if not isinstance(password, bytes):
+            raise errors['pw']
+
+        if not isinstance(key_names, Iterable):
+            raise errors['kn1']
+
+        if sum(1 for _ in key_names) != 2:
+            raise errors['kn2']
 
         # Return statements
-        return key_creator()
+        return key_creator(
+            key_length=key_length,
+            public_exponent=public_exponent,
+
+            password=password,
+            output_to=output_to,
+
+            key_names=key_names
+        )
 
     def load_keys(
             self,
@@ -1160,6 +1182,37 @@ class _RSAMethods:
         )
         return
 
+    @staticmethod
+    def _verify_types(**kwargs):
+        message = kwargs.get("message", b"")
+        label = kwargs.get("label", b"")
+
+        tm = type(message)
+        tl = type(label)
+
+        if tm is str:
+            message = message.encode('utf-8')
+        elif tm is bytes:
+            pass
+        else:
+            raise TypeError(
+                "Message must be bytes or str"
+            )
+
+        if tl is str:
+            label = label.encode('utf-8')
+        elif tl is bytes:
+            pass
+        else:
+            raise TypeError(
+                "Label must be bytes or str"
+            )
+
+        return {
+            'message': message,
+            'label': label
+        }
+
     def encrypt(
             self, message: [bytes, str],
             label: [bytes, str] = b""
@@ -1180,10 +1233,9 @@ class _RSAMethods:
         if self.public_key is None:
             raise ValueError("Public key is missing or unset.")
 
-        message, label = _prepare_types(
-            prepare_type='rsa',
-            message=message, label=label
-        )
+        prep_types = self._verify_types(message=message, label=label)
+        message = prep_types.get("message")
+        label = prep_types.get("label")
 
         encrypted_message = self.public_key.encrypt(
             message,
@@ -1217,10 +1269,9 @@ class _RSAMethods:
         if self.private_key is None:
             raise ValueError("Private key is missing or unset.")
 
-        message, label = _prepare_types(
-            prepare_type='rsa',
-            message=message, label=label
-        )
+        prep_types = self._verify_types(message=message, label=label)
+        message = prep_types.get("message")
+        label = prep_types.get("label")
 
         decrypted_message = self.private_key.decrypt(
             message,
@@ -1251,9 +1302,8 @@ class _RSAMethods:
         if self.private_key is None:
             raise ValueError("Private key is missing or unset.")
 
-        message = _prepare_types(
-            prepare_type='rsa', message=message
-        )[0]
+        prep_types = self._verify_types(message=message)
+        message = prep_types.get("message")
 
         signature = self.private_key.sign(
             message,
@@ -1286,12 +1336,8 @@ class _RSAMethods:
         if self.public_key is None:
             raise ValueError("Public key is missing or unset.")
 
-        message = _prepare_types(
-            prepare_type='rsa', message=message,
-        )[0]
-
-        if not isinstance(signature, bytes):
-            raise TypeError("Signature passed must be bytes")
+        prep_types = self._verify_types(message=message)
+        message = prep_types.get("message")
 
         try:
             self.public_key.verify(
@@ -1332,10 +1378,9 @@ class _RSAMethods:
         if not key:
             raise ValueError("No RSA public key was passed.")
 
-        message, label, key = _prepare_types(
-            prepare_type='rsa', message=message,
-            label=label, key=key
-        )
+        prep_types = self._verify_types(message=message, label=label)
+        message = prep_types.get("message")
+        label = prep_types.get("label")
 
         # Main code
         rsa_key = serialization.load_pem_public_key(
@@ -1379,10 +1424,9 @@ class _RSAMethods:
         if not key:
             raise ValueError("No RSA private key was passed.")
 
-        message, label, key = _prepare_types(
-            prepare_type='rsa', message=message,
-            label=label, key=key
-        )
+        prep_types = self._verify_types(message=message, label=label)
+        message = prep_types.get("message")
+        label = prep_types.get("label")
 
         # Main code
         rsa_key = serialization.load_pem_private_key(
@@ -1425,10 +1469,8 @@ class _RSAMethods:
         if not key:
             raise ValueError("No RSA private key was passed.")
 
-        message, key = _prepare_types(
-            prepare_type='rsa', message=message,
-            key=key
-        )
+        prep_types = self._verify_types(message=message)
+        message = prep_types.get("message")
 
         rsa_key = serialization.load_pem_private_key(
             key,
@@ -1469,14 +1511,8 @@ class _RSAMethods:
         if not key:
             raise ValueError("Public key is missing or unset.")
 
-        message, key = _prepare_types(
-            prepare_type='rsa', message=message,
-            key=key
-        )
-
-        # Run code depending on signature type (bytes)
-        if not isinstance(signature, bytes):
-            raise TypeError("Signature passed must be bytes")
+        prep_types = self._verify_types(message=message)
+        message = prep_types.get("message")
 
         rsa_key = serialization.load_pem_public_key(
             key
@@ -1512,10 +1548,9 @@ class _ChaCha20Methods:
     def __init__(self, parent):
         self.hash_method = parent.hash_method
 
-    # Method is supposed to be public
-    # noinspection PyMethodMayBeStatic
+    @staticmethod
     def encrypt(
-            self, data: [bytes, str],
+            data: [bytes, str],
             key: bytes = b"",
 
             nonce: bytes = b"",
@@ -1547,10 +1582,9 @@ class _ChaCha20Methods:
 
         return encrypted_data
 
-    # Method is supposed to be public
-    # noinspection PyMethodMayBeStatic
+    @staticmethod
     def decrypt(
-            self, data: [bytes, str],
+            data: [bytes, str],
             key: bytes = b"",
 
             nonce: bytes = b"",
@@ -1586,10 +1620,9 @@ class _GCMMethods:
     def __init__(self, parent):
         self.hash_method = parent.hash_method
 
-    # Method is supposed to be public
-    # noinspection PyMethodMayBeStatic
+    @staticmethod
     def encrypt(
-            self, data: [bytes, str],
+            data: [bytes, str],
             key: bytes = b"",
 
             nonce: bytes = b"",
@@ -1621,10 +1654,9 @@ class _GCMMethods:
 
         return encrypted_data
 
-    # Method is supposed to be public
-    # noinspection PyMethodMayBeStatic
+    @staticmethod
     def decrypt(
-            self, data: [bytes, str],
+            data: [bytes, str],
             key: bytes = b"",
 
             nonce: bytes = b"",
