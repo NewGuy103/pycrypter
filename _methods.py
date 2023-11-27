@@ -7,7 +7,10 @@ import traceback
 import shutil
 
 import secrets
-from typing import Callable, Any
+from typing import (
+    Callable, Any, Literal,
+    Iterable
+)
 
 import cryptography
 
@@ -20,7 +23,16 @@ from cryptography.fernet import Fernet
 from cryptography.hazmat.primitives.asymmetric import rsa, padding
 
 
-def progress_bar(iteration, total, prefix='', suffix='', decimals=1, length=50, fill='='):
+def progress_bar(
+        iteration: int, total: int,
+        prefix: str = '',
+
+        suffix: str = '',
+        decimals: int = 1,
+
+        length: int = 50,
+        fill: str = '='
+) -> None:
     """
     Call sys.stdout.write() to write a progress bar to the terminal
 
@@ -70,7 +82,12 @@ def progress_bar(iteration, total, prefix='', suffix='', decimals=1, length=50, 
     sys.stdout.flush()
 
 
-def iterate_dir(directory, iterate_tree=True, skip_dirs=None):
+def iterate_dir(
+        directory: str,
+        iterate_tree: bool = True,
+
+        skip_dirs: Iterable = None
+) -> tuple[set, set]:
     """
     Retrieves file paths within a directory and tracks failed paths due to permission issues.
 
@@ -96,7 +113,9 @@ def iterate_dir(directory, iterate_tree=True, skip_dirs=None):
         skip_dirs = set()
 
     if iterate_tree not in (True, False):
-        raise TypeError(f"iterate_tree expected boolean, got {iterate_tree}")
+        raise TypeError(
+            f"'iterate_tree' expected boolean, got '{type(iterate_tree).__name__}'"
+        )
 
     file_paths = set()
     failed_paths = set()
@@ -116,7 +135,10 @@ def iterate_dir(directory, iterate_tree=True, skip_dirs=None):
                 file_paths.add(path)
 
             elif os.path.isdir(path) and iterate_tree:
-                file_paths.update(iterate_dir(path)[0])
+                result = iterate_dir(path)
+
+                file_paths.update(result[0])
+                failed_paths.update(result[1])
         except PermissionError:
             failed_paths.add(path)
 
@@ -163,13 +185,15 @@ class ThreadManager:
 
     def worker(
             self, callback_function: Callable,
+            *args,
+
             semaphore: threading.Semaphore = None,
 
             threads_set: set = None,
             error_list: list = None,
 
             result_list: list = None,
-            *args, **kwargs
+            **kwargs
     ) -> Any:
         """
         Executes a callback function with thread and error handling.
@@ -278,7 +302,8 @@ class ThreadManager:
 
     def thread_create(
             self,
-            callback: Callable, *args,
+            callback: Callable,
+            *args,
 
             semaphore: threading.Semaphore = None,
             threads_set: set = None,
@@ -773,12 +798,12 @@ class _FernetMethods:
             password_pepper (bytes | str): Pepper for password (default: b"").
 
         Raises:
-            TypeError: If 'keep_copy' is not a boolean.
+            TypeError [1]: If 'keep_copy' is not a boolean.
             FileNotFoundError: If the input file does not exist.
             IsADirectoryError: If the input file is a directory.
             ValueError: If key length is invalid for Fernet.
-            TypeError: If 'hash_pepper' or 'password_pepper' are not bytes or strings.
-            TypeError: If 'password' is not bytes or a string.
+            TypeError [2]: If 'hash_pepper' or 'password_pepper' are not bytes or strings.
+            TypeError [3]: If 'password' is not bytes or a string.
         """
 
         if keep_copy not in (True, False):
@@ -870,12 +895,12 @@ class _FernetMethods:
             password_pepper (bytes | str): Pepper for password (default: b"").
 
         Raises:
-            TypeError: If 'keep_copy' is not a boolean.
+            TypeError [1]: If 'keep_copy' is not a boolean.
             FileNotFoundError: If the input file does not exist.
             IsADirectoryError: If the input file is a directory.
             ValueError: If key length is invalid for Fernet.
-            TypeError: If 'hash_pepper' or 'password_pepper' are not bytes or strings.
-            TypeError: If 'password' is not bytes or a string.
+            TypeError [2]: If 'hash_pepper' or 'password_pepper' are not bytes or strings.
+            TypeError [3]: If 'password' is not bytes or a string.
         """
 
         if keep_copy not in (True, False):
@@ -955,8 +980,8 @@ class _FernetMethods:
 
         Raises:
             ValueError: If key length is invalid for Fernet.
-            TypeError: If 'hash_pepper' or 'password_pepper' are not bytes or strings.
-            TypeError: If 'password' is not bytes or a string.
+            TypeError [1]: If 'hash_pepper' or 'password_pepper' are not bytes or strings.
+            TypeError [2]: If 'password' is not bytes or a string.
         """
 
         if kdf_key:
@@ -1023,8 +1048,8 @@ class _FernetMethods:
 
         Raises:
             ValueError: If key length is invalid for Fernet.
-            TypeError: If 'hash_pepper' or 'password_pepper' are not bytes or strings.
-            TypeError: If 'password' is not bytes or a string.
+            TypeError [1]: If 'hash_pepper' or 'password_pepper' are not bytes or strings.
+            TypeError [2]: If 'password' is not bytes or a string.
         """
 
         if kdf_key:
@@ -1091,33 +1116,21 @@ class _RSAMethods:
         load_keys(public_key, private_key, key_password):
             Load RSA PEM keys into the class.
 
-        encrypt(message, label):
+        encrypt(message, label, public_key):
             Encrypts data using the loaded RSA keys.
 
-        decrypt(message, label):
+        decrypt(message, label, private_key, key_password):
             Decrypts data using the loaded RSA keys.
 
-        sign(message):
+        sign(message, private_key, key_password):
             Get the signature of a certain message.
 
-        verify(signature, message):
+        verify(signature, message, public_key):
             Verify the signature of a certain message.
-
-        manual_encrypt(message, key, label):
-            Encrypt data using the provided RSA key.
-
-        manual_decrypt(message, key, label, key_password):
-            Decrypt data using the provided RSA key.
-
-        manual_sign(message, key, key_password):
-            Get the signature of a certain message using the provided RSA key.
-
-        manual_verify(signature, message, key):
-            Verify the signature of a certain message using the provided RSA key.
 
     Raises:
         TypeError: If incorrect data types are provided for various parameters.
-        ValueError: If keys are missing or unset, or if key-related parameters are not provided.
+        ValueError: If keys are missing or not provided.
     """
 
     def __init__(self, parent):
@@ -1215,16 +1228,17 @@ class _RSAMethods:
         return
 
     def load_keys(
-            self,
-            public_key: bytes,
-
+            self, public_key: bytes,
             private_key: bytes,
+
+            key_source: str | Literal['file', 'caller'] = "caller",
             key_password: bytes | None = None
     ) -> None:
         """
-        Load RSA PEM keys into the class.
+        Load RSA PEM keys from file paths or arguments into instance.
 
         Parameters:
+            key_source (str): Source of where to get the keys. (file for paths, caller for passing to arguments)
             public_key (bytes): Public key bytes in PEM format.
             private_key (bytes): Private key bytes in PEM format.
             key_password (bytes | None): Password for the private key (default: None).
@@ -1233,8 +1247,23 @@ class _RSAMethods:
             None
 
         Raises:
-            ValueError: If public_key or private_key is missing or not provided.
+            ValueError [1]: If the key_source is not file or caller.
+            ValueError [2]: If public_key or private_key is missing or not provided.
+            FileNotFoundError: If public_key or private_key paths do not exist.
         """
+
+        if key_source not in ('file', 'caller'):
+            raise ValueError("Key sources can only be 'file' or 'caller'")
+
+        if key_source == 'file':
+            if not os.path.isfile(public_key):
+                raise FileNotFoundError(f"Key path '{public_key}' does not exist")
+            elif not os.path.isfile(private_key):
+                raise FileNotFoundError(f"Key path '{private_key}' does not exist")
+
+            with open(public_key, 'rb') as public_keyfile, open(private_key, 'rb') as private_keyfile:
+                public_key = public_keyfile.read()
+                private_key = private_keyfile.read()
 
         self.public_key = serialization.load_pem_public_key(
             public_key
@@ -1247,25 +1276,34 @@ class _RSAMethods:
 
     def encrypt(
             self, message: bytes | str,
-            label: bytes | str = b""
+            label: bytes | str = b"",
+
+            public_key: bytes = None
     ) -> bytes:
         """
-        Encrypt data using the loaded RSA keys.
+        Encrypt data using a provided key or the loaded RSA keys.
 
         Parameters:
             message (bytes | str): Data to be encrypted.
             label (bytes | str): Label to include in the encryption (default: b"").
+            public_key (bytes): Public key bytes to use. (defaults to self.public_key)
 
         Returns:
             bytes: Encrypted message.
 
         Raises:
-            ValueError: If the public key is missing or unset.
+            ValueError: If the public key is missing or not provided.
             TypeError: If message or label is not bytes or str.
         """
 
-        if self.public_key is None:
-            raise ValueError("Public key is missing or unset.")
+        if public_key:
+            rsa_key = serialization.load_pem_public_key(
+                public_key
+            )
+        elif not public_key and self.public_key:
+            rsa_key = self.public_key
+        else:
+            raise ValueError("Public key is missing or not provided.")
 
         match message:
             case str():
@@ -1282,200 +1320,6 @@ class _RSAMethods:
                 pass
             case _:
                 raise TypeError("'label' can only be bytes or str")
-
-        encrypted_message = self.public_key.encrypt(
-            message,
-            padding.OAEP(
-                mgf=padding.MGF1(algorithm=self.hash_method),
-                algorithm=self.hash_method,
-
-                label=label
-            )
-        )
-
-        return encrypted_message
-
-    def decrypt(
-            self, message: bytes | str,
-            label: bytes | str = b""
-    ) -> bytes:
-        """
-        Decrypt data using the loaded RSA keys.
-
-        Parameters:
-            message (bytes | str): Data to be decrypted.
-            label (bytes | str): Label used in encryption (default: b"").
-
-        Returns:
-            bytes: Decrypted message.
-
-        Raises:
-            ValueError: If the private key is missing or unset.
-            TypeError: If message or label is not bytes or str.
-        """
-
-        if self.private_key is None:
-            raise ValueError("Private key is missing or unset.")
-
-        match message:
-            case str():
-                message = message.encode('utf-8')
-            case bytes():
-                pass
-            case _:
-                raise TypeError("'message' can only be bytes or str")
-
-        match label:
-            case str():
-                label = label.encode('utf-8')
-            case bytes():
-                pass
-            case _:
-                raise TypeError("'label' can only be bytes or str")
-
-        decrypted_message = self.private_key.decrypt(
-            message,
-            padding.OAEP(
-                mgf=padding.MGF1(algorithm=self.hash_method),
-                algorithm=self.hash_method,
-
-                label=label
-            )
-        )
-
-        return decrypted_message
-
-    def sign(
-            self, message: bytes | str
-    ) -> bytes:
-        """
-        Get the signature of a certain message.
-
-        Parameters:
-            message (bytes | str): Data to be signed.
-
-        Returns:
-            bytes: Signature of the message.
-
-        Raises:
-            ValueError: If the private key is missing or unset.
-            TypeError: If message is not bytes or str.
-        """
-
-        if self.private_key is None:
-            raise ValueError("Private key is missing or unset.")
-
-        match message:
-            case str():
-                message = message.encode('utf-8')
-            case bytes():
-                pass
-            case _:
-                raise TypeError("'message' can only be bytes or str")
-
-        signature = self.private_key.sign(
-            message,
-            padding.PSS(
-                mgf=padding.MGF1(algorithm=self.hash_method),
-                salt_length=padding.PSS.MAX_LENGTH,
-            ),
-            self.hash_method
-        )
-
-        return signature
-
-    def verify(
-            self, signature: bytes,
-            message: bytes | str
-    ) -> bool:
-        """
-        Verify the signature of a certain message.
-
-        Parameters:
-            signature (bytes): Signature to be verified.
-            message (bytes | str): Data whose signature needs verification.
-
-        Returns:
-            bool: True if the signatures match, False if not.
-
-        Raises:
-            ValueError: If the public key is missing or unset.
-            TypeError: If message is not bytes or str.
-        """
-
-        if self.public_key is None:
-            raise ValueError("Public key is missing or unset.")
-
-        match message:
-            case str():
-                message = message.encode('utf-8')
-            case bytes():
-                pass
-            case _:
-                raise TypeError("'message' can only be bytes or str")
-
-        try:
-            self.public_key.verify(
-                signature,
-                message,
-
-                padding.PSS(
-                    mgf=padding.MGF1(algorithm=self.hash_method),
-                    salt_length=padding.PSS.MAX_LENGTH
-                ),
-
-                self.hash_method
-            )
-        except cryptography.exceptions.InvalidSignature:  # NOQA: ct.exceptions exists
-            return False
-
-        return True
-
-    def manual_encrypt(
-            self, message: bytes | str,
-            key: bytes = b"",
-
-            label: bytes | str = b""
-    ) -> bytes:
-        """
-        Encrypt data using the provided RSA key.
-
-        Parameters:
-            key (bytes): Public key to encrypt the data.
-            message (bytes | str): Data to be encrypted.
-            label (bytes | str): Label to include in the encryption (default: b"").
-
-        Returns:
-            bytes: Encrypted message.
-
-        Raises:
-            ValueError: If no RSA public key was passed.
-            TypeError: If message or label is not bytes or str.
-        """
-
-        if not key:
-            raise ValueError("No RSA public key was passed.")
-
-        match message:
-            case str():
-                message = message.encode('utf-8')
-            case bytes():
-                pass
-            case _:
-                raise TypeError("'message' can only be bytes or str")
-
-        match label:
-            case str():
-                label = label.encode('utf-8')
-            case bytes():
-                pass
-            case _:
-                raise TypeError("'label' can only be bytes or str")
-
-        # Main code
-        rsa_key = serialization.load_pem_public_key(
-            key
-        )
 
         encrypted_message = rsa_key.encrypt(
             message,
@@ -1489,32 +1333,39 @@ class _RSAMethods:
 
         return encrypted_message
 
-    def manual_decrypt(
+    def decrypt(
             self, message: bytes | str,
-            key: bytes = b"",
-
             label: bytes | str = b"",
-            key_password: bytes | None = None
+
+            private_key: bytes = None,
+            key_password: bytes = None
     ) -> bytes:
         """
-        Decrypt data using the provided RSA key.
+        Decrypt data using a provided key or the loaded RSA keys.
 
         Parameters:
-            key (bytes): Private key to decrypt the data.
             message (bytes | str): Data to be decrypted.
             label (bytes | str): Label used in encryption (default: b"").
-            key_password (bytes | None): Password for the private key (default: None).
+            private_key (bytes): Private key bytes to use. (defaults to self.private_key)
+            key_password (bytes): Private key password.
 
         Returns:
             bytes: Decrypted message.
 
         Raises:
-            ValueError: If no RSA private key was passed.
+            ValueError: If the private key is missing or not provided.
             TypeError: If message or label is not bytes or str.
         """
 
-        if not key:
-            raise ValueError("No RSA private key was passed.")
+        if private_key:
+            rsa_key = serialization.load_pem_private_key(
+                private_key,
+                key_password
+            )
+        elif not private_key and self.private_key:
+            rsa_key = self.private_key
+        else:
+            raise ValueError("Private key is missing or not provided.")
 
         match message:
             case str():
@@ -1532,13 +1383,7 @@ class _RSAMethods:
             case _:
                 raise TypeError("'label' can only be bytes or str")
 
-        # Main code
-        rsa_key = serialization.load_pem_private_key(
-            key,
-            key_password
-        )
-
-        parsed_message = rsa_key.decrypt(
+        decrypted_message = rsa_key.decrypt(
             message,
             padding.OAEP(
                 mgf=padding.MGF1(algorithm=self.hash_method),
@@ -1548,32 +1393,39 @@ class _RSAMethods:
             )
         )
 
-        return parsed_message
+        return decrypted_message
 
-    def manual_sign(
+    def sign(
             self, message: bytes | str,
-            key: bytes = b"",
+            private_key: bytes = None,
 
-            key_password: bytes | None = None
+            key_password: bytes = None
     ) -> bytes:
         """
         Get the signature of a certain message.
 
         Parameters:
-            key (bytes): Private key to sign the data.
             message (bytes | str): Data to be signed.
-            key_password (bytes | None): Password for the private key (default: None).
+            private_key (bytes): Private key bytes to use. (defaults to self.private_key)
+            key_password (bytes): Password for private key.
 
         Returns:
             bytes: Signature of the message.
 
         Raises:
-            ValueError: If no RSA private key was passed.
+            ValueError: If the private key is missing or not provided.
             TypeError: If message is not bytes or str.
         """
 
-        if not key:
-            raise ValueError("No RSA private key was passed.")
+        if private_key:
+            rsa_key = serialization.load_pem_private_key(
+                private_key,
+                key_password
+            )
+        elif not private_key and self.private_key:
+            rsa_key = self.private_key
+        else:
+            raise ValueError("Private key is missing or not provided.")
 
         match message:
             case str():
@@ -1583,12 +1435,7 @@ class _RSAMethods:
             case _:
                 raise TypeError("'message' can only be bytes or str")
 
-        rsa_key = serialization.load_pem_private_key(
-            key,
-            key_password
-        )
-
-        signed_message = rsa_key.sign(
+        signature = rsa_key.sign(
             message,
             padding.PSS(
                 mgf=padding.MGF1(algorithm=self.hash_method),
@@ -1597,13 +1444,13 @@ class _RSAMethods:
             self.hash_method
         )
 
-        return signed_message
+        return signature
 
-    def manual_verify(
+    def verify(
             self, signature: bytes,
             message: bytes | str,
 
-            key: bytes = b""
+            public_key: bytes = None
     ) -> bool:
         """
         Verify the signature of a certain message.
@@ -1611,18 +1458,24 @@ class _RSAMethods:
         Parameters:
             signature (bytes): Signature to be verified.
             message (bytes | str): Data whose signature needs verification.
-            key (bytes): Public key to verify the signature (default: b"").
+            public_key (bytes): Public key bytes to use. (defaults to self.public_key
 
         Returns:
             bool: True if the signatures match, False if not.
 
         Raises:
-            ValueError: If the public key is missing or unset.
+            ValueError: If the public key is missing or not provided.
             TypeError: If message is not bytes or str.
         """
 
-        if not key:
-            raise ValueError("Public key is missing or unset.")
+        if public_key:
+            rsa_key = serialization.load_pem_public_key(
+                public_key
+            )
+        elif not public_key and self.public_key:
+            rsa_key = self.public_key
+        else:
+            raise ValueError("Public key is missing or not provided.")
 
         match message:
             case str():
@@ -1631,10 +1484,6 @@ class _RSAMethods:
                 pass
             case _:
                 raise TypeError("'message' can only be bytes or str")
-
-        rsa_key = serialization.load_pem_public_key(
-            key
-        )
 
         try:
             rsa_key.verify(
@@ -1648,7 +1497,7 @@ class _RSAMethods:
 
                 self.hash_method
             )
-        except cryptography.exceptions.InvalidSignature:  # NOQA: Exceptions exists
+        except cryptography.exceptions.InvalidSignature:  # NOQA: ct.exceptions exists
             return False
 
         return True
