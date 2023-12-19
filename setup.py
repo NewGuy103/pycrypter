@@ -4,6 +4,7 @@ setup(
     name='newguy103-pycrypter',
     version='1.0.0',
     packages=find_packages(),
+    py_modules=['__init__', '_methods'],
     install_requires=['cryptography'],
     author='NewGuy103',
     author_email='userchouenthusiast@gmail.com',
