@@ -2,7 +2,7 @@ from setuptools import setup, find_packages
 
 setup(
     name='newguy103-pycrypter',
-    version='1.0.0',
+    version='1.0.1',
     packages=find_packages(),  # Define the package name
     py_modules=['pycrypter.__init__', 'pycrypter._methods'],  # Add modules explicitly
     install_requires=['cryptography'],
